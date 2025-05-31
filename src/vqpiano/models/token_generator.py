@@ -201,35 +201,24 @@ class TokenGenerator(nn.Module):
         )
         total_loss = token_type_loss + pitch_loss + velocity_loss + duration_loss
 
-        token_type_acc = (
-            (token_type_logits.detach().argmax(dim=2) == target.token_type)
-            .float()
-            .mean()
-            .item()
+        def calculate_acc(logits, target, effective_mask):
+            return (
+                ((logits.detach().argmax(dim=2) == target) * effective_mask)
+                .float()
+                .sum()
+                / effective_mask.sum()
+            ).item()
+
+        token_type_acc = calculate_acc(
+            token_type_logits, target.token_type, target.is_frame + target.is_note
         )
-        pitch_acc = (
-            ((pitch_logits.detach().argmax(dim=2) == target.pitch) * target.is_note)
-            .float()
-            .mean()
-            .item()
-        )
-        velocity_acc = (
-            (
-                (velocity_logits.detach().argmax(dim=2) == target.velocity)
-                * target.is_note
-            )
-            .float()
-            .mean()
-            .item()
-        )
-        duration_acc = (
-            (
-                (duration_logits.detach().argmax(dim=2) == target.note_duration)
-                * target.is_note
-            )
-            .float()
-            .mean()
-            .item()
+
+        pitch_acc = calculate_acc(pitch_logits, target.pitch, target.is_note)
+
+        velocity_acc = calculate_acc(velocity_logits, target.velocity, target.is_note)
+
+        duration_acc = calculate_acc(
+            duration_logits, target.note_duration, target.is_note
         )
 
         return TokenGenerator.Loss(
