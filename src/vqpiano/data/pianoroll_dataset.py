@@ -1,0 +1,132 @@
+import hashlib
+from pathlib import Path
+from typing import Any, Callable, Literal
+import torch
+from torch.utils.data import Dataset
+import music_data_analysis
+
+
+class SegmentIndexer:
+    def __init__(self, num_segments_list: list[int]):
+        self.num_segments_list = torch.tensor(num_segments_list)
+        self.length = int(self.num_segments_list.sum().item())
+        self.cum_num_segments = torch.cumsum(self.num_segments_list, dim=0)
+
+    def __len__(self):
+        return self.length
+
+    def __getitem__(self, idx):
+        song_idx = torch.searchsorted(self.cum_num_segments, idx + 1)
+        segment_idx = idx - self.cum_num_segments[song_idx] + self.num_segments_list[song_idx]
+        return int(song_idx.item()), int(segment_idx.item())
+
+
+class PianorollDataset(Dataset):
+    def __init__(
+        self,
+        dataset_path: Path,
+        frames_per_beat: int = 8,
+        hop_length: int = 32,
+        length: int = 32 * 8,
+        min_start_overlap: int = 32,
+        min_end_overlap: int = 32,
+        input_file_format: Literal["pianoroll", "midi"] = "pianoroll",
+        transform: Callable | None = None,
+    ):
+        self.ds = music_data_analysis.Dataset(dataset_path)
+        self.frames_per_beat = frames_per_beat
+        self.hop_length = hop_length
+        self.length = length
+        self.input_file_format = input_file_format
+        self.start_pre_pad = length - min_start_overlap
+        self.end_pre_pad = length - min_end_overlap + self.hop_length
+        self.transform = transform
+        self.songs = self.ds.songs()
+        self.song_n_segments = []
+        for song in self.songs:
+            duration: int = song.read_json("duration") * self.frames_per_beat // 64  # the duration is in 1/64 beat
+            self.song_n_segments.append(
+                (duration - self.length + self.start_pre_pad + self.end_pre_pad) // self.hop_length
+            )
+
+        self.indexer = SegmentIndexer(self.song_n_segments)
+
+        print("PianorollDataset initialized with", len(self), "segments from", len(self.songs), "songs")
+
+    def __len__(self):
+        return len(self.indexer)
+
+    def __getitem__(self, idx):
+        if idx < 0:
+            idx = len(self) + idx
+        if idx < 0 or idx >= len(self):
+            raise IndexError(f"Index {idx} is out of bounds for the dataset of length {len(self)}")
+        song_idx, segment_idx = self.indexer[idx]
+        song = self.songs[song_idx]
+        segment_start = segment_idx * self.hop_length - self.start_pre_pad
+        segment_end = segment_start + self.length
+        segment = song.get_segment(segment_start, segment_end, frames_per_beat=self.frames_per_beat)
+        if self.transform is not None:
+            return self.transform(segment)
+        else:
+            return segment
+
+
+class FullSongPianorollDataset(Dataset):
+    def __init__(
+        self,
+        dataset_path: Path,
+        frames_per_beat: int = 8,
+        max_duration: int = 100000000000,
+        input_file_format: Literal["pianoroll", "midi"] = "pianoroll",
+        transform: Callable[[music_data_analysis.Song], Any] | None = None,
+        split: Literal["train", "test"] = "train",
+        train_set_ratio: float = 0.9,
+    ):
+        self.ds = music_data_analysis.Dataset(dataset_path)
+        self.frames_per_beat = frames_per_beat
+        self.max_duration = max_duration
+        self.input_file_format = input_file_format
+        self.transform = transform
+        self.songs = self.ds.songs()
+
+        original_len = len(self.songs)
+
+        self.songs = [
+            song for song in self.songs if song.read_json("duration") * self.frames_per_beat // 64 < self.max_duration
+        ]
+
+        # use md5 to split the dataset into train and test
+
+        def is_test_sample(song_name: str, train_set_ratio: float):
+            # Hash the string to a hex digest
+            hash_digest = hashlib.md5(song_name.encode('utf-8')).hexdigest()
+            # Convert the hex digest to an integer
+            hash_int = int(hash_digest, 16)
+            # Normalize it to a float in [0, 1)
+            hash_float = hash_int / 16**32
+            # Return True if it's in the test split
+            return hash_float > train_set_ratio
+
+        if split == "train":
+            self.songs = [song for song in self.songs if not is_test_sample(song.song_name, train_set_ratio)]
+        elif split == "test":
+            self.songs = [song for song in self.songs if is_test_sample(song.song_name, train_set_ratio)]
+        else:
+            raise ValueError(f"Invalid split: {split}")
+
+        print(f"FullSongPianorollDataset initialized with {len(self.songs)} songs filtered from {original_len} songs. Split: {split}")
+
+    def __len__(self):
+        return len(self.songs)
+
+    def __getitem__(self, idx):
+        if idx < 0:
+            idx = len(self) + idx
+        if idx < 0 or idx >= len(self):
+            raise IndexError(f"Index {idx} is out of bounds for the dataset of length {len(self)}")
+        song: music_data_analysis.Song = self.songs[idx]
+        if self.transform is not None:
+            return self.transform(song)
+        else:
+            return song

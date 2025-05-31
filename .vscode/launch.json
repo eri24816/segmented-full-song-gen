@@ -1,0 +1,90 @@
+{
+    "version": "0.1.0",
+    "configurations": [
+        {
+            "name": "Python: Train latent diff",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "train.py",
+            "env": {
+                "CUDA_VISIBLE_DEVICES": "1",
+            },
+            "args": [
+                "--model_config",
+                "config/simple_ar/model_simple_ar.yaml",
+                "--dataset_config",
+                "config/dataset_pop80k_k_pr.yaml",
+                "--save_dir",
+                ".",
+                "-g",
+                "simple_ar",
+                "--num_workers",
+                "16",
+                "--task",
+                "simple_ar"
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
+            "name": "Python: Eval token based",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "eval.py",
+            "args": [
+                "--task",
+                "vae",
+                "--model_config",
+                "config/model_vae.py",
+                "--dataset_config",
+                "config/dataset_vae.py",
+                "--pretrained_ckpt_path",
+                "wandb/run-20250322_222345-152h9pzx/files/checkpoints/epoch=1-step=300000.ckpt",
+                "--num_samples",
+                "5"
+            ]
+        },
+        {
+            "name": "Python Debugger: Attach using Process Id",
+            "type": "debugpy",
+            "request": "attach",
+            "processId": "${command:pickProcess}"
+        },
+        {
+            "name": "Python: Debug Tests",
+            "type": "python",
+            "request": "launch",
+            "program": "${file}",
+            "purpose": [
+                "debug-test"
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "env": {
+                "PYTEST_ADDOPTS": "--no-cov -n0 --dist no"
+            }
+        },
+        {
+            "name": "Python: Train segment",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "src/vqpiano/training/main.py",
+            "args": [
+                "--model_config",
+                "config/simple_ar/model_segment_full_song.yaml",
+                "--dataset_config",
+                "config/simple_ar/dataset_segment_full_song.yaml",
+                "--save_dir",
+                ".",
+                "-g",
+                "segment_full_song",
+                "--num_workers",
+                "0",
+                "--task",
+                "segment_full_song",
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": false
+        }
+    ]
+}
