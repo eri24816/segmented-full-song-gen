@@ -1,7 +1,8 @@
 type: vae
 model:
   type: vae
-  target_duration: 32
+  duration: 32
+  test_duration: 256
   max_tokens: 160
   pitch_range: [21, 109]
   max_note_duration: 64

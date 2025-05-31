@@ -55,11 +55,10 @@ def main(args):
 
     model = create_model(model_config.model)
 
-    train_dl, test_dl = create_dataloader(
+    train_dl, test_ds = create_dataloader(
         dataset_config,
         dataloader_config,
         model_config,
-        model,
     )
 
     training_wrapper = create_training_wrapper(model_config, model)
@@ -80,8 +79,7 @@ def main(args):
 
     demo_callback = create_demo_callback(
         model_config,
-        dataset_config,
-        test_dl=test_dl,
+        test_ds=test_ds,
     )
 
     if model_config.model.type == "segment_full_song":

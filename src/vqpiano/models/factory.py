@@ -58,15 +58,17 @@ def create_model(config):
             dim=config.encoder.dim,
             num_layers=config.encoder.num_layers,
             pitch_range=config.pitch_range,
-            num_pos=config.target_duration,
+            num_pos=config.duration,
             is_causal=False,
+            max_note_duration=config.max_note_duration,
         )
         decoder = TokenGenerator(
             dim=config.decoder.dim,
             num_layers=config.decoder.num_layers,
             pitch_range=config.pitch_range,
-            num_pos=config.target_duration + config.prompt_duration,
+            num_pos=config.duration,
             condition_dim=config.bottleneck.vae_params.latent_dim,
+            max_note_duration=config.max_note_duration,
         )
 
         if config.bottleneck.type == "vae":
@@ -88,26 +90,9 @@ def create_model(config):
             encoder=encoder,
             decoder=decoder,
             bottleneck=bottleneck,
-            duration=config.target_duration,
-            prompt_duration=config.prompt_duration,
-            max_tokens_target=config.max_tokens_target,
-            max_tokens_prompt=config.max_tokens_prompt,
+            duration=config.duration,
+            max_tokens=config.max_tokens,
             pitch_range=config.pitch_range,
         )
-    elif config["type"] == "gaussian_diffusion":
-        denoiser_conf = config.denoiser
-        if denoiser_conf.type == "transformer":
-            denoiser = TransformerDenoiser(
-                input_dim=denoiser_conf.input_dim,
-                dim=denoiser_conf.dim,
-                num_layers=denoiser_conf.num_layers,
-            )
-        else:
-            raise ValueError(f"Unknown denoiser type: {denoiser_conf.type}")
-        diffusion = GaussianDiffusion(
-            num_steps=config.num_steps,
-            denoiser=denoiser,
-        )
-        return diffusion
     else:
         raise ValueError(f"Unknown model type: {config['type']}")

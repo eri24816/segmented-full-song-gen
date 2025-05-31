@@ -1,7 +1,6 @@
 type: segment_full_song
 model:
   type: segment_full_song
-  max_tokens_rate: 4.2
   max_tokens: 950
   pitch_range: [21, 109]
   max_note_duration: 64

@@ -1,4 +1,4 @@
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import Dataset
 
 from vqpiano.training.segment_full_song import (
     SegmentFullSongDemoCallback,
@@ -38,8 +38,7 @@ def create_training_wrapper(model_config, model):
     elif model_config.type == "vae":
         wrapper = VAETrainingWrapper(
             model,
-            max_tokens_prompt=model_config.model.max_tokens_prompt,
-            max_tokens_target=model_config.model.max_tokens_target,
+            max_tokens=model_config.model.max_tokens,
             pitch_range=model_config.model.pitch_range,
             lr=model_config.training.lr,
             betas=model_config.training.betas,
@@ -52,27 +51,26 @@ def create_training_wrapper(model_config, model):
     return wrapper
 
 
-def create_demo_callback(
-    model_config, dataset_config, test_dl: DataLoader | Dataset | None = None
-):
+def create_demo_callback(model_config, test_ds: Dataset | None = None):
     if model_config.type == "simple_ar":
         callback = SimpleARDemoCallback(
             demo_every=model_config.training.demo_steps,
             duration=model_config.model.duration,
         )
     elif model_config.type == "segment_full_song":
-        assert isinstance(test_dl, Dataset)
+        assert isinstance(test_ds, Dataset)
         callback = SegmentFullSongDemoCallback(
             demo_every=model_config.training.demo_steps,
-            test_dl=test_dl,
+            test_ds=test_ds,
             max_context_duration=model_config.model.max_context_duration,
             # max_tokens_rate=model_config.model.max_tokens_rate,
             max_tokens=model_config.model.max_tokens,
         )
     elif model_config.type == "vae":
+        assert isinstance(test_ds, Dataset)
         callback = VAEDemoCallback(
             demo_every=model_config.training.demo_steps,
-            dataset_path=dataset_config.path,
+            test_ds=test_ds,
         )
     else:
         raise ValueError(f"Unknown model type: {model_config['type']}")

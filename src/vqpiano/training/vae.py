@@ -1,14 +1,13 @@
 from pathlib import Path
-from typing import Callable, Sequence
+from typing import Sized
 
 import lightning as LT
+from music_data_analysis import Pianoroll
 import torch
 from lightning.fabric.utilities.rank_zero import rank_zero_only
-from music_data_analysis import Pianoroll
 from safetensors.torch import save_file
 
-from vqpiano.data.pianoroll_dataset import PianorollDataset
-from vqpiano.evaluate.vae import evaluate_vae
+from torch.utils.data import Dataset
 from vqpiano.models.encoder_decoder import EncoderDecoder
 from vqpiano.models.token_sequence import TokenSequence
 from vqpiano.utils.data import iter_dataclass
@@ -19,8 +18,7 @@ class VAETrainingWrapper(LT.LightningModule):
     def __init__(
         self,
         model: EncoderDecoder,
-        max_tokens_prompt: int,
-        max_tokens_target: int,
+        max_tokens: int,
         pitch_range: list[int],
         lr,
         betas: tuple[float, float] = (0.9, 0.999),
@@ -29,15 +27,10 @@ class VAETrainingWrapper(LT.LightningModule):
     ):
         super().__init__()
         self.example_input_array = {
-            "prompt": TokenSequence(
-                token=torch.zeros(2, max_tokens_prompt, 2, dtype=torch.long),
-                token_type=torch.zeros(2, max_tokens_prompt, dtype=torch.long),
-                pos=torch.zeros(2, max_tokens_prompt, dtype=torch.long),
-            ),
-            "target": TokenSequence(
-                token=torch.zeros(2, max_tokens_target, 2, dtype=torch.long),
-                token_type=torch.zeros(2, max_tokens_target, dtype=torch.long),
-                pos=torch.zeros(2, max_tokens_target, dtype=torch.long),
+            "x": TokenSequence(
+                token=torch.zeros(2, max_tokens, 3, dtype=torch.long),
+                token_type=torch.zeros(2, max_tokens, dtype=torch.long),
+                pos=torch.zeros(2, max_tokens, dtype=torch.long),
             ),
         }
         self.model = model
@@ -61,17 +54,14 @@ class VAETrainingWrapper(LT.LightningModule):
 
     def training_step(
         self,
-        batch: tuple[TokenSequence, TokenSequence],
+        batch: dict[str, TokenSequence],
         batch_idx: int,
     ):
         self.model.train()
-        prompt, target = batch
+        tokens = batch["tokens"]
         self.model.set_step(self.global_step)
 
-        prompt = prompt.to(self.device)
-        target = target.to(self.device)
-
-        loss: EncoderDecoder.Loss = self.model(target=target, prompt=prompt)
+        loss: EncoderDecoder.Loss = self.model(x=tokens)
 
         metrics = {}
 
@@ -101,53 +91,11 @@ class VAETrainingWrapper(LT.LightningModule):
 
 
 class VAEDemoCallback(LT.Callback):
-    def __init__(self, demo_every: int, dataset_path, length: int = 32 * 16):
+    def __init__(self, demo_every: int, test_ds: Dataset):
         super().__init__()
 
         self.demo_every = demo_every
-        dataset = PianorollDataset(
-            Path(dataset_path),
-            frames_per_beat=8,
-            length=length,
-            min_start_overlap=length,
-            min_end_overlap=length,
-        )
-
-        def collate_fn(pr_list: list[Pianoroll]):
-            pr = pr_list[0]
-            bars = []
-            for bar in pr.iter_over_bars_pr(bar_length=32):
-                bars.append(bar)
-
-            result = TokenSequence.from_pianorolls(bars)
-
-            return result
-
-        class MyDataLoader(Sequence[TokenSequence]):
-            def __init__(
-                self,
-                dataset: PianorollDataset,
-                collate_fn: Callable[[list[Pianoroll]], TokenSequence],
-                batch_size: int,
-            ):
-                self.dataset = dataset
-                self.collate_fn = collate_fn
-                self.batch_size = batch_size
-
-            def __getitem__(self, index: int) -> TokenSequence:  # type: ignore
-                return self.collate_fn([self.dataset[index]])
-
-            def __len__(self):
-                return len(self.dataset)
-
-        self.eval_ds = MyDataLoader(
-            dataset,
-            collate_fn=collate_fn,
-            batch_size=1,
-        )
-
-        # self.eval_ds = create_dataloader_simple_ar_reconstruct(dataset_params, 32 * 16)
-
+        self.test_ds = test_ds
     @rank_zero_only
     @torch.no_grad()
     def on_train_batch_end(  # type: ignore
@@ -158,47 +106,54 @@ class VAEDemoCallback(LT.Callback):
         batch: tuple[TokenSequence, TokenSequence],
         batch_idx,
     ):
-        if pl_module.global_step % 4 == 0:
+        if (
+            torch.cuda.memory_reserved()
+            >= torch.cuda.get_device_properties(0).total_memory * 0.95
+        ):
             torch.cuda.empty_cache()
         min_pitch = pl_module.model.pitch_range[0]
         pl_module.model.eval()
-        if batch_idx % self.demo_every == 0:
+        if pl_module.global_step == 1 or pl_module.global_step % self.demo_every == 0:
             pl_module.model.eval()
 
-            eval_result = evaluate_vae(
-                model=pl_module.model,
-                eval_ds=self.eval_ds,
-                num_samples=1,
-                device=pl_module.device,
-            )[0]
+            assert isinstance(self.test_ds, Sized)
+            pr: Pianoroll = self.test_ds[
+                int(torch.randint(0, len(self.test_ds), (1,)))
+            ]["pianoroll"]
 
-            for name, sample in eval_result.items():
-                assert isinstance(sample, TokenSequence)
-                log_midi_as_audio(
-                    sample.to_midi(min_pitch),
-                    name,
-                    pl_module.global_step,
+            n_iter = pr.duration // pl_module.model.duration
+            result = []
+            for i in range(n_iter):
+                bar = pr.slice(
+                    i * pl_module.model.duration, (i + 1) * pl_module.model.duration
                 )
+                input = TokenSequence.from_pianorolls(
+                    [bar],
+                    max_tokens=pl_module.model.max_tokens,
+                    max_note_duration=pl_module.model.encoder.max_note_duration,
+                ).to(pl_module.device)
+                result.append(pl_module.model.reconstruct(input))
 
-            try:
-                log_image(
-                    torch.cat(
-                        [
-                            eval_result["gt"].to_pianoroll(min_pitch).to_img_tensor(),
-                            eval_result["reconst_ind"]
-                            .to_pianoroll(min_pitch)
-                            .to_img_tensor(),
-                            eval_result["reconst"]
-                            .to_pianoroll(min_pitch)
-                            .to_img_tensor(),
-                            eval_result["reconst_sampled_latent"]
-                            .to_pianoroll(min_pitch)
-                            .to_img_tensor(),
-                        ],
-                        dim=0,
-                    ),
-                    "pr",
-                    pl_module.global_step,
-                )
-            except Exception as e:  # TODO: fix this
-                print("Error logging image", e)
+            result = TokenSequence.cat_time(result)
+
+            log_midi_as_audio(
+                pr.to_midi(),
+                "gt",
+                pl_module.global_step,
+            )
+            log_image(
+                pr.to_img_tensor(),
+                "gt_pr",
+                pl_module.global_step,
+            )
+
+            log_midi_as_audio(
+                result.to_midi(min_pitch),
+                "reconst",
+                pl_module.global_step,
+            )
+            log_image(
+                result.to_pianoroll(min_pitch).to_img_tensor(),
+                "reconst_pr",
+                pl_module.global_step,
+            )

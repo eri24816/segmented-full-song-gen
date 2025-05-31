@@ -105,13 +105,13 @@ class EncoderDecoder(nn.Module):
         decoder,
         bottleneck,
         duration: int,
-        max_tokens_target: int,
+        max_tokens: int,
         pitch_range: list[int],
     ):
         super().__init__()
 
         self.duration = duration
-        self.max_tokens = max_tokens_target
+        self.max_tokens = max_tokens
         self.pitch_range = pitch_range
 
         self.encoder: FeatureExtractor = encoder
@@ -182,7 +182,9 @@ class EncoderDecoder(nn.Module):
         bars = list(pianoroll.iter_over_bars_pr())
         for i in range(0, len(bars), max_batch_size):
             batch = bars[i : i + max_batch_size]
-            repr = TokenSequence.from_pianorolls(batch, device=device)
+            repr = TokenSequence.from_pianorolls(
+                batch, device=device, max_note_duration=self.encoder.max_note_duration
+            )
             with torch.no_grad():
                 latent = self.encode(repr)
             result_batches.append(latent)

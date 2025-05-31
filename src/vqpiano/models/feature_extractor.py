@@ -77,6 +77,7 @@ class FeatureExtractor(nn.Module):
         self.velocity_emb = nn.Embedding(128, dim)
         self.duration_emb = nn.Embedding(max_note_duration, dim)
         self.use_start_end_pos = use_start_end_pos
+        self.max_note_duration = max_note_duration
 
         if condition_dim > 0:
             self.in_attn_transform = MLP(condition_dim, dim, dim, 1, residual=True)

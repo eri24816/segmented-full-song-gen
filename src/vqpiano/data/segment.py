@@ -6,7 +6,7 @@ import numpy as np
 import music_data_analysis
 import torch
 
-from vqpiano.data.pianoroll_dataset import FullSongPianorollDataset
+from vqpiano.data.dataset import FullSongPianorollDataset
 from vqpiano.models.token_sequence import TokenSequence
 
 

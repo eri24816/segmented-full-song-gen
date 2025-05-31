@@ -118,7 +118,7 @@ class TokenGenerator(nn.Module):
             feature_extractor_input = x[:, :-1]
 
         feature = self.feature_extractor(
-            feature_extractor_input, condition
+            feature_extractor_input, condition=condition
         )  # (batch_size, num_tokens-1, dim)
 
         if prompt is not None:
@@ -289,7 +289,9 @@ class TokenGenerator(nn.Module):
                         pbar.update(1)
                 break
 
-            feature = self.feature_extractor(output, condition)  # (b=1, length, dim)
+            feature = self.feature_extractor(
+                output, condition=condition
+            )  # (b=1, length, dim)
             token_type_logits = self.token_type_classifier(feature[:, -1, :])[
                 0
             ]  # (class)

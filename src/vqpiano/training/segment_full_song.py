@@ -108,7 +108,7 @@ class SegmentFullSongDemoCallback(LT.Callback):
     def __init__(
         self,
         demo_every: int,
-        test_dl: torch.utils.data.Dataset,
+        test_ds: torch.utils.data.Dataset,
         max_context_duration: dict[str, int],
         # max_tokens_rate: float,
         max_tokens: int,
@@ -116,7 +116,7 @@ class SegmentFullSongDemoCallback(LT.Callback):
         super().__init__()
 
         self.demo_every = demo_every
-        self.test_ds = test_dl
+        self.test_ds = test_ds
         self.max_context_duration = max_context_duration
         self.max_tokens = max_tokens
 

@@ -18,6 +18,7 @@ class SegmentIndexer:
     print(indexer[4]) # (2, 1)
     print(indexer[5]) # (2, 2)
     """
+
     def __init__(self, num_segments_list: list[int]):
         self.num_segments_list = torch.tensor(num_segments_list)
         self.length = int(self.num_segments_list.sum().item())
@@ -28,7 +29,9 @@ class SegmentIndexer:
 
     def __getitem__(self, idx):
         song_idx = torch.searchsorted(self.cum_num_segments, idx + 1)
-        segment_idx = idx - self.cum_num_segments[song_idx] + self.num_segments_list[song_idx]
+        segment_idx = (
+            idx - self.cum_num_segments[song_idx] + self.num_segments_list[song_idx]
+        )
         return int(song_idx.item()), int(segment_idx.item())
 
 
@@ -42,8 +45,8 @@ def is_train_sample(song_name: str, train_set_ratio: float):
     hash_int = int(hash_digest, 16)
     # Normalize it to a float in [0, 1)
     hash_float = hash_int / 16**32
-    # Return True if it's in the test split
-    return hash_float > train_set_ratio
+    # Return True if it's in the train split
+    return hash_float < train_set_ratio
 
 
 class PianorollDataset(Dataset):
@@ -59,7 +62,7 @@ class PianorollDataset(Dataset):
         transform: Callable | None = None,
         transform_kwargs: dict | None = None,
         split: Literal["train", "test"] = "train",
-        train_set_ratio: float = 0.9,
+        train_set_ratio: float = 1,
     ):
         self.ds = music_data_analysis.Dataset(dataset_path)
         self.frames_per_beat = frames_per_beat
@@ -89,14 +92,26 @@ class PianorollDataset(Dataset):
             raise ValueError(f"Invalid split: {split}")
 
         for song in self.songs:
-            duration: int = song.read_json("duration") * self.frames_per_beat // 64  # the duration is in 1/64 beat
+            duration: int = (
+                song.read_json("duration") * self.frames_per_beat // 64
+            )  # the duration is in 1/64 beat
             self.song_n_segments.append(
-                (duration - self.length + self.start_pre_pad + self.end_pre_pad) // self.hop_length
+                (duration - self.length + self.start_pre_pad + self.end_pre_pad)
+                // self.hop_length
             )
 
         self.indexer = SegmentIndexer(self.song_n_segments)
 
-        print("PianorollDataset initialized with", len(self), "segments from", len(self.songs), "songs")
+        print(
+            "PianorollDataset initialized with",
+            len(self),
+            "segments from",
+            len(self.songs),
+            "songs, filtered from",
+            len(self.ds),
+            "songs, Split:",
+            split,
+        )
 
     def __len__(self):
         return len(self.indexer)
@@ -105,12 +120,16 @@ class PianorollDataset(Dataset):
         if idx < 0:
             idx = len(self) + idx
         if idx < 0 or idx >= len(self):
-            raise IndexError(f"Index {idx} is out of bounds for the dataset of length {len(self)}")
+            raise IndexError(
+                f"Index {idx} is out of bounds for the dataset of length {len(self)}"
+            )
         song_idx, segment_idx = self.indexer[idx]
         song = self.songs[song_idx]
         segment_start = segment_idx * self.hop_length - self.start_pre_pad
         segment_end = segment_start + self.length
-        segment = song.get_segment(segment_start, segment_end, frames_per_beat=self.frames_per_beat)
+        segment = song.get_segment(
+            segment_start, segment_end, frames_per_beat=self.frames_per_beat
+        )
         if self.transform is not None:
             return self.transform(segment, **self.transform_kwargs)
         else:
@@ -163,7 +182,9 @@ class FullSongPianorollDataset(Dataset):
         else:
             raise ValueError(f"Invalid split: {split}")
 
-        print(f"FullSongPianorollDataset initialized with {len(self.songs)} songs filtered from {original_len} songs. Split: {split}")
+        print(
+            f"FullSongPianorollDataset initialized with {len(self.songs)} songs filtered from {original_len} songs. Split: {split}"
+        )
 
     def __len__(self):
         return len(self.songs)
@@ -172,7 +193,9 @@ class FullSongPianorollDataset(Dataset):
         if idx < 0:
             idx = len(self) + idx
         if idx < 0 or idx >= len(self):
-            raise IndexError(f"Index {idx} is out of bounds for the dataset of length {len(self)}")
+            raise IndexError(
+                f"Index {idx} is out of bounds for the dataset of length {len(self)}"
+            )
         song: music_data_analysis.Song = self.songs[idx]
         if self.transform is not None:
             return self.transform(song)
