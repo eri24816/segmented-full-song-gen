@@ -87,10 +87,14 @@ def log_midi_as_audio(
     midi: MidiFile, name: str, step: int, save_dir: Path = Path(""), soundfont_path: Path | None = None
 ):
     if soundfont_path is None:
-        soundfont_path = Path(os.getenv("SOUNDFONT_PATH", "./ignore/FluidR3_GM.sf2"))
-    assert soundfont_path.exists(), (
-        f"Soundfont path {soundfont_path} does not exist. Please set the SOUNDFONT_PATH environment variable to a valid path."
-    )
+        soundfont_path_str = os.getenv("SOUNDFONT_PATH")
+        assert soundfont_path_str is not None, (
+            "Please specify the soundfont path or set the SOUNDFONT_PATH environment variable."
+        )
+        soundfont_path = Path(soundfont_path_str)
+        assert soundfont_path.exists(), (
+            f"Soundfont path {soundfont_path} does not exist. Please set the SOUNDFONT_PATH environment variable to a valid path."
+        )
     save_dir = Path(wandb.run.dir) / save_dir  # type: ignore
     save_dir.mkdir(exist_ok=True)
     midi_path = save_dir / "midi" / f"{name}/{step:08}.mid"

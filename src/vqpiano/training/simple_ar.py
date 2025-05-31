@@ -86,7 +86,10 @@ class SimpleARDemoCallback(LT.Callback):
         batch: TokenSequence,
         batch_idx,
     ):
-        if pl_module.global_step % 4 == 0:
+        if (
+            torch.cuda.memory_reserved()
+            >= torch.cuda.get_device_properties(0).total_memory * 0.95
+        ):
             torch.cuda.empty_cache()
         if pl_module.global_step == 1 or pl_module.global_step % self.demo_every == 0:
             pl_module.model.eval()

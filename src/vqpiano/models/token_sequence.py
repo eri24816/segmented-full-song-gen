@@ -488,7 +488,11 @@ class TokenSequence:
         frames_per_bar = frames_per_beat * beats_per_bar
         for i in range(len(notes)):
             if durations[i] == 0:
-                if successors[notes[i]] is not None:
+                if (
+                    successors[notes[i]] is not None
+                    and successors[notes[i]].onset // frames_per_bar
+                    == notes[i].onset // frames_per_bar
+                ):
                     # hold until the next note
                     notes[i].offset = successors[notes[i]].onset
                 else:
@@ -574,30 +578,42 @@ if __name__ == "__main__":
             Note(onset=6, pitch=60, velocity=100, offset=7),
             Note(onset=6, pitch=62, velocity=100, offset=8),
             Note(onset=31, pitch=60, velocity=100, offset=32),
+            Note(onset=31, pitch=50, velocity=100, offset=32),
+            Note(onset=33, pitch=50, velocity=100, offset=50),
         ],
-        duration=32,
+        duration=64,
     )
-    print(TokenSequence.from_pianorolls([pr1], need_frame_tokens=False))
     print(
-        TokenSequence.from_pianorolls([pr1], need_frame_tokens=False)
+        TokenSequence.from_pianorolls(
+            [pr1], max_note_duration=64, need_frame_tokens=False
+        )
+    )
+    print(
+        TokenSequence.from_pianorolls(
+            [pr1], max_note_duration=64, need_frame_tokens=False
+        )
         .to_pianoroll()
         .notes
     )
     assert (
-        TokenSequence.from_pianorolls([pr1], need_frame_tokens=False)
-        .to_pianoroll()
-        .notes
-        == pr1.notes
-    )
-    assert (
-        TokenSequence.from_pianorolls([pr1], need_frame_tokens=True)
+        TokenSequence.from_pianorolls(
+            [pr1], max_note_duration=64, need_frame_tokens=False
+        )
         .to_pianoroll()
         .notes
         == pr1.notes
     )
     assert (
         TokenSequence.from_pianorolls(
-            [pr1], need_frame_tokens=True, need_end_token=True
+            [pr1], max_note_duration=64, need_frame_tokens=True
+        )
+        .to_pianoroll()
+        .notes
+        == pr1.notes
+    )
+    assert (
+        TokenSequence.from_pianorolls(
+            [pr1], max_note_duration=64, need_frame_tokens=True, need_end_token=True
         )
         .to_pianoroll()
         .notes
