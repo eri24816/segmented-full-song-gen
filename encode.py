@@ -2,10 +2,10 @@ from pathlib import Path
 from omegaconf import OmegaConf
 import torch
 from vqpiano.data.dataset import FullSongPianorollDataset
-from vqpiano.models.factory import model_factory
+from vqpiano.models.factory import create_model
 
 from vqpiano.models.encoder_decoder import EncoderDecoder
-from vqpiano.models.representation import SymbolicRepresentation
+from vqpiano.models.token_sequence import TokenSequence
 from vqpiano.models.utils import load_ckpt_state_dict
 
 import argparse
@@ -30,7 +30,7 @@ if __name__ == "__main__":
     model_config = OmegaConf.load(args.model_config)
     dataset_config = OmegaConf.load(args.dataset_config)
 
-    model: EncoderDecoder = model_factory(model_config.model)  # type: ignore
+    model: EncoderDecoder = create_model(model_config.model)  # type: ignore
 
     model.load_state_dict(
         load_ckpt_state_dict(
@@ -53,9 +53,7 @@ if __name__ == "__main__":
         result_batches = []
         for i in range(0, len(bars), max_batch_size):
             batch = bars[i : i + max_batch_size]
-            repr = SymbolicRepresentation.from_pianorolls(
-                batch, device=torch.device("cuda")
-            )
+            repr = TokenSequence.from_pianorolls(batch, device=torch.device("cuda"))
             with torch.no_grad():
                 latent = model.encode(repr)
             result_batches.append(latent)

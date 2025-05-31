@@ -16,7 +16,7 @@ from vqpiano.models.feature_extractor import FeatureExtractor
 from vqpiano.models.pe import (
     StartEndPosEmb,
 )
-from vqpiano.models.representation import SymbolicRepresentation
+from vqpiano.models.token_sequence import TokenSequence
 import x_transformers
 
 from vqpiano.utils.torch_utils.shape_guard import shape_guard
@@ -101,7 +101,7 @@ class SegmentFullSongModel(nn.Module):
         token_type_acc: float
 
     class SegmentItem(TypedDict):
-        tokens: SymbolicRepresentation  # (batch, length)
+        tokens: TokenSequence  # (batch, length)
         song_duration: torch.Tensor  # (batch,)
         shift_from_song_start: torch.Tensor  # (batch,)
         segment_duration: torch.Tensor  # (batch,)
@@ -267,7 +267,7 @@ class SegmentFullSongModel(nn.Module):
         return global_feature
 
     @shape_guard(_output="1 self.latent_dim")
-    def calculate_bar_embedding(self, tokens: SymbolicRepresentation) -> torch.Tensor:
+    def calculate_bar_embedding(self, tokens: TokenSequence) -> torch.Tensor:
         """
         input: one bar of tokens. No padding or frame tokens, only notes. Batch size is 1.
         output: bar embedding (batch_size=1, dim)
@@ -424,7 +424,7 @@ class SegmentFullSongModel(nn.Module):
         bar_embeddings: torch.Tensor,
         bar_embeddings_mask: torch.Tensor,
         max_length: int | None = None,
-        prompt: SymbolicRepresentation | None = None,
+        prompt: TokenSequence | None = None,
         condition: torch.Tensor | None = None,
     ):
         """
@@ -450,7 +450,7 @@ class SegmentFullSongModel(nn.Module):
         if prompt is not None:
             output = prompt.clone()
         else:
-            output = SymbolicRepresentation(device=device)
+            output = TokenSequence(device=device)
 
         shift_from_song_start_tensor = torch.tensor(
             [shift_from_song_start], device=device
@@ -505,7 +505,7 @@ class SegmentFullSongModel(nn.Module):
             ]  # (class)
             token_type_pred = nucleus_sample(token_type_logits, 0.95)  # scalar
 
-            if token_type_pred == SymbolicRepresentation.FRAME:  # frame
+            if token_type_pred == TokenSequence.FRAME:  # frame
                 current_pos += 1
 
                 if current_pos >= duration:
@@ -514,7 +514,7 @@ class SegmentFullSongModel(nn.Module):
                 output.add_frame()
                 last_pitch_in_frame = None
 
-            elif token_type_pred == SymbolicRepresentation.NOTE:  # note
+            elif token_type_pred == TokenSequence.NOTE:  # note
                 # sample pitch
                 pitch_logits = self.pitch_classifier(feature[:, -1, :])[0]  # (class)
                 # predicted pitch must ascend in the same frame
@@ -556,7 +556,7 @@ class SegmentFullSongModel(nn.Module):
         bar_embeddings: torch.Tensor,
         bar_embeddings_mask: torch.Tensor,
         max_length: int | None = None,
-        prompt: SymbolicRepresentation | None = None,
+        prompt: TokenSequence | None = None,
         condition: torch.Tensor | None = None,
     ):
         if DEBUG:
@@ -588,7 +588,7 @@ class SegmentFullSongModel(nn.Module):
         else:
             # Segment length is longer than length of self-attention.
             # So we need to sample segment in a loop.
-            result = SymbolicRepresentation(device=device)
+            result = TokenSequence(device=device)
             for target_duration in range(
                 self.frames_per_bar,
                 segment_duration + self.frames_per_bar,
@@ -754,7 +754,7 @@ class SegmentFullSongModel(nn.Module):
                     )
                 bar_embeddings[0, pos_in_song // self.frames_per_bar] = (
                     self.calculate_bar_embedding(
-                        SymbolicRepresentation.from_pianorolls(
+                        TokenSequence.from_pianorolls(
                             [
                                 segment["pianoroll"].slice(
                                     pos_in_segment, pos_in_segment + self.frames_per_bar
@@ -796,7 +796,7 @@ class SegmentFullSongModel(nn.Module):
                     # just a dummy context with zero duration, which will take no effect in the model
                     context.append(
                         {
-                            "tokens": SymbolicRepresentation(device=device),
+                            "tokens": TokenSequence(device=device),
                             "shift_from_song_start": torch.tensor([0], device=device),
                             "segment_duration": torch.tensor([0], device=device),
                             "song_duration": torch.tensor(
@@ -850,7 +850,7 @@ class SegmentFullSongModel(nn.Module):
 
                 context.append(
                     {
-                        "tokens": SymbolicRepresentation.from_pianorolls(
+                        "tokens": TokenSequence.from_pianorolls(
                             [context_pr],
                             need_frame_tokens=False,
                             device=device,
@@ -935,11 +935,11 @@ class SegmentFullSongModel(nn.Module):
 
 def test():
     device = "cpu"
-    from vqpiano.models.factory import model_factory
+    from vqpiano.models.factory import create_model
 
     encoder_decoder = cast(
         EncoderDecoder,
-        model_factory(OmegaConf.load("config/simple_ar/model_vae.yaml").model),
+        create_model(OmegaConf.load("config/simple_ar/model_vae.yaml").model),
     )
     from safetensors.torch import load_file
 
@@ -967,7 +967,7 @@ def test():
 
     context: Sequence[SegmentFullSongModel.SegmentItem] = [
         {
-            "tokens": SymbolicRepresentation.from_pianorolls(
+            "tokens": TokenSequence.from_pianorolls(
                 [
                     Pianoroll([Note(0, 60, 100), Note(3, 62, 100)]),
                 ]
@@ -978,7 +978,7 @@ def test():
             "song_duration": torch.tensor([1024]).to(device),
         },
         {
-            "tokens": SymbolicRepresentation.from_pianorolls(
+            "tokens": TokenSequence.from_pianorolls(
                 [
                     Pianoroll(
                         [Note(20, 60, 100), Note(23, 62, 100), Note(28, 62, 100)]
@@ -1006,7 +1006,7 @@ def test():
 
     context: Sequence[SegmentFullSongModel.SegmentItem] = [
         {
-            "tokens": SymbolicRepresentation.from_pianorolls(
+            "tokens": TokenSequence.from_pianorolls(
                 [
                     Pianoroll([Note(0, 60, 100), Note(3, 62, 100)]),
                     Pianoroll([Note(0, 60, 100), Note(61, 62, 100)]),
@@ -1018,7 +1018,7 @@ def test():
             "song_duration": torch.tensor([1024, 1024]).to(device),
         },
         {
-            "tokens": SymbolicRepresentation.from_pianorolls(
+            "tokens": TokenSequence.from_pianorolls(
                 [
                     Pianoroll(
                         [Note(20, 60, 100), Note(23, 62, 100), Note(28, 62, 100)]
@@ -1033,7 +1033,7 @@ def test():
         },
     ]
 
-    x = SymbolicRepresentation.from_pianorolls(
+    x = TokenSequence.from_pianorolls(
         [
             Pianoroll([Note(0, 60, 100), Note(3, 62, 100), Note(3, 89, 100)]),
             Pianoroll([Note(0, 60, 100), Note(61, 62, 100)]),

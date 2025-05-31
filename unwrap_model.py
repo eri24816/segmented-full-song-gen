@@ -4,16 +4,16 @@ from pathlib import Path
 
 import torch
 
-from vqpiano.models.factory import model_factory
-from vqpiano.training.factory import training_wrapper_factory
+from vqpiano.models.factory import create_model
+from vqpiano.training.factory import create_training_wrapper
 
 
 def export_model(ckpt_path: Path, save_dir: Path, prefix: str):
     ckpt = torch.load(ckpt_path, map_location="cpu")
     model_config = ckpt["model_config"]
 
-    model = model_factory(model_config.model)
-    training_wrapper = training_wrapper_factory(model_config, model)
+    model = create_model(model_config.model)
+    training_wrapper = create_training_wrapper(model_config, model)
     training_wrapper.load_state_dict(ckpt["state_dict"])
     training_wrapper.export_model(save_dir, prefix)
 

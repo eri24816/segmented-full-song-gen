@@ -14,7 +14,7 @@ from vqpiano.training.vae import (
 )
 
 
-def training_wrapper_factory(model_config, model):
+def create_training_wrapper(model_config, model):
     if model_config.type == "simple_ar":
         wrapper = SimpleARTrainingWrapper(
             model,
@@ -30,6 +30,9 @@ def training_wrapper_factory(model_config, model):
             model,
             pitch_range=model_config.model.pitch_range,
             lr=model_config.training.lr,
+            betas=model_config.training.betas,
+            eps=model_config.training.eps,
+            weight_decay=model_config.training.weight_decay,
             accum_batches=model_config.training.accum_batches,
         )
     elif model_config.type == "vae":
@@ -39,6 +42,9 @@ def training_wrapper_factory(model_config, model):
             max_tokens_target=model_config.model.max_tokens_target,
             pitch_range=model_config.model.pitch_range,
             lr=model_config.training.lr,
+            betas=model_config.training.betas,
+            eps=model_config.training.eps,
+            weight_decay=model_config.training.weight_decay,
         )
 
     else:
@@ -46,8 +52,8 @@ def training_wrapper_factory(model_config, model):
     return wrapper
 
 
-def demo_callback_factory(
-    model_config, dataset_config, save_dir, test_dl: DataLoader | Dataset | None = None
+def create_demo_callback(
+    model_config, dataset_config, test_dl: DataLoader | Dataset | None = None
 ):
     if model_config.type == "simple_ar":
         callback = SimpleARDemoCallback(
@@ -55,6 +61,7 @@ def demo_callback_factory(
             duration=model_config.model.duration,
         )
     elif model_config.type == "segment_full_song":
+        assert isinstance(test_dl, Dataset)
         callback = SegmentFullSongDemoCallback(
             demo_every=model_config.training.demo_steps,
             test_dl=test_dl,

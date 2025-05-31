@@ -9,24 +9,26 @@ from vqpiano.models.encoder_decoder import (
     VAEBottleneck,
     identity_bottleneck,
 )
+from vqpiano.models.feature_extractor import FeatureExtractor
 from vqpiano.models.token_generator import TokenGenerator
 from vqpiano.models.segment_full_song import SegmentFullSongModel
 
 
-def model_factory(config):
+def create_model(config):
     if config.type == "simple_ar":
         model = TokenGenerator(
             dim=config.dim,
             num_layers=config.num_layers,
             pitch_range=config.pitch_range,
             num_pos=config.duration,
+            max_note_duration=config.max_note_duration,
         )
         return model
 
     elif config.type == "segment_full_song":
         encoder_decoder = cast(
             EncoderDecoder,
-            model_factory(OmegaConf.load("config/simple_ar/model_vae.yaml").model),
+            create_model(OmegaConf.load("config/simple_ar/model_vae.yaml").model),
         )
         from safetensors.torch import load_file
 
@@ -52,14 +54,14 @@ def model_factory(config):
         )
         return model
     elif config.type == "vae":
-        encoder = OldFeatureExtractor(
+        encoder = FeatureExtractor(
             dim=config.encoder.dim,
             num_layers=config.encoder.num_layers,
             pitch_range=config.pitch_range,
             num_pos=config.target_duration,
             is_causal=False,
         )
-        decoder = OldTokenGenerator(
+        decoder = TokenGenerator(
             dim=config.decoder.dim,
             num_layers=config.decoder.num_layers,
             pitch_range=config.pitch_range,
@@ -86,7 +88,7 @@ def model_factory(config):
             encoder=encoder,
             decoder=decoder,
             bottleneck=bottleneck,
-            target_duration=config.target_duration,
+            duration=config.target_duration,
             prompt_duration=config.prompt_duration,
             max_tokens_target=config.max_tokens_target,
             max_tokens_prompt=config.max_tokens_prompt,

@@ -189,7 +189,7 @@ class SegmentFullSongDemoCallback(LT.Callback):
                     "pr",
                     step,
                     annotations=annotations,
-                    extension="png",
+                    format="png",
                 )
 
             except Exception:

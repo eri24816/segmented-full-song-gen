@@ -2,20 +2,19 @@ type: vae
 model:
   type: vae
   target_duration: 32
-  prompt_duration: 128
-  max_tokens_target: 160
-  max_tokens_prompt: 550
+  max_tokens: 160
   pitch_range: [21, 109]
+  max_note_duration: 64
   encoder:
     dim: 512
-    num_layers: 8
+    num_layers: 5
   decoder:
     dim: 512
-    num_layers: 8
+    num_layers: 5
   bottleneck:
     type: "vae"
     vae_params:
-      beta: 0.1
+      beta: 0.2
       latent_dim: 128
       beta_cycle_steps: 20000
       beta_start_step: 1000

@@ -5,11 +5,11 @@ import torch.nn as nn
 from torch import Tensor
 import x_transformers.x_transformers
 
-from ..network import MLP
+from .network import MLP
 
 
-from .representation import SymbolicRepresentation
-from .pe import binary_positional_encoding, one_hot_positional_encoding, StartEndPosEmb
+from .token_sequence import TokenSequence
+from .pe import one_hot_positional_encoding, StartEndPosEmb
 from vqpiano.utils.torch_utils.tensor_op import cat_to_right, pad_to_length
 
 import x_transformers
@@ -59,11 +59,12 @@ class FeatureExtractor(nn.Module):
         num_layers: int,
         pitch_range: list[int],
         num_pos: int,
-        num_duration: int,
+        max_note_duration: int,
         reduce: bool = True,
         condition_dim: int = 0,
         is_causal: bool = True,
         cross_attend: bool = False,
+        use_start_end_pos: bool = False,
     ):
         super().__init__()
         self.pitch_range = pitch_range
@@ -74,7 +75,8 @@ class FeatureExtractor(nn.Module):
         self.frame_emb = nn.Embedding(1, dim)
         self.pitch_emb = nn.Embedding(self.num_pitch, dim)
         self.velocity_emb = nn.Embedding(128, dim)
-        self.duration_emb = nn.Embedding(num_duration, dim)
+        self.duration_emb = nn.Embedding(max_note_duration, dim)
+        self.use_start_end_pos = use_start_end_pos
 
         if condition_dim > 0:
             self.in_attn_transform = MLP(condition_dim, dim, dim, 1, residual=True)
@@ -90,14 +92,12 @@ class FeatureExtractor(nn.Module):
             cross_attend=cross_attend,
         )
 
-        binary_pe = binary_positional_encoding(num_pos, 5)
-        one_hot_pe = one_hot_positional_encoding(num_pos, 32)
-
-        beat_pe = torch.cat([binary_pe, one_hot_pe], dim=1)  # (max_len, dim)
+        beat_pe = one_hot_positional_encoding(num_pos, 32)  # (max_len, dim)
         self.beat_pe: torch.Tensor
         self.register_buffer("beat_pe", beat_pe)
 
-        self.start_end_pe = StartEndPosEmb(num_pos, 32)
+        if self.use_start_end_pos:
+            self.start_end_pe = StartEndPosEmb(num_pos, 32)
 
         if reduce:
             self.out_token_emb = torch.nn.Parameter(torch.randn(dim))
@@ -110,11 +110,11 @@ class FeatureExtractor(nn.Module):
 
     def forward(
         self,
-        input: SymbolicRepresentation,
-        shift_from_segment_start: Tensor,
-        segment_duration: Tensor,
-        shift_from_song_start: Tensor,
-        song_duration: Tensor,
+        input: TokenSequence,
+        shift_from_segment_start: Tensor | None = None,
+        segment_duration: Tensor | None = None,
+        shift_from_song_start: Tensor | None = None,
+        song_duration: Tensor | None = None,
         condition: torch.Tensor | None = None,
         context: torch.Tensor | None = None,
         context_mask: torch.Tensor | None = None,
@@ -136,18 +136,42 @@ class FeatureExtractor(nn.Module):
         else:
             assert context is None, "context is not supported for cross_attn=False"
 
+        if self.use_start_end_pos:
+            assert (
+                shift_from_segment_start is not None
+                and segment_duration is not None
+                and shift_from_song_start is not None
+                and song_duration is not None
+            ), (
+                "The constructor is set to use_start_end_pos=True, so shift_from_segment_start, segment_duration, shift_from_song_start, song_duration must be provided"
+            )
+        else:
+            assert (
+                shift_from_segment_start is None
+                and segment_duration is None
+                and shift_from_song_start is None
+                and song_duration is None
+            ), (
+                "The constructor is set to use_start_end_pos=False, so shift_from_segment_start, segment_duration, shift_from_song_start, song_duration, and context must be None"
+            )
+
         # handle zero length input
         if input.length == 0 and not self.reduce:
             return torch.zeros(input.batch_size, 0, self.dim, device=input.device)
 
-        pe = torch.cat(
-            [
-                self.start_end_pe(shift_from_song_start, song_duration, input.pos),
-                self.start_end_pe(shift_from_segment_start, segment_duration, input.pos),
-                self.beat_pe[input.pos],
-            ],
-            dim=2,
-        )  # (batch_size, num_tokens, dim_pe)
+        if self.use_start_end_pos:
+            pe = torch.cat(
+                [
+                    self.start_end_pe(shift_from_song_start, song_duration, input.pos),
+                    self.start_end_pe(
+                        shift_from_segment_start, segment_duration, input.pos
+                    ),
+                    self.beat_pe[input.pos],
+                ],
+                dim=2,
+            )  # (batch_size, num_tokens, dim_pe)
+        else:
+            pe = self.beat_pe[input.pos]
 
         pe = pad_to_length(pe, dim=2, target_length=self.dim, pad_value=0)  # (batch_size, num_tokens, dim)
 

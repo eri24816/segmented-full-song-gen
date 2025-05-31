@@ -6,28 +6,28 @@ import torch
 from tqdm import tqdm
 
 from vqpiano.models.encoder_decoder import EncoderDecoder
-from vqpiano.models.representation import SymbolicRepresentation
+from vqpiano.models.token_sequence import TokenSequence
 
 
 def reconstruct_independent(
-    model: EncoderDecoder, gt_bars: SymbolicRepresentation, latents: torch.Tensor
+    model: EncoderDecoder, gt_bars: TokenSequence, latents: torch.Tensor
 ):
-    result = SymbolicRepresentation(device=latents.device)
+    result = TokenSequence(device=latents.device)
 
     for i in tqdm(range(len(latents)), desc="Generating..."):
         prompt_bars = gt_bars[max(0, i - 4) : i]
-        prompt = SymbolicRepresentation(device=latents.device)
+        prompt = TokenSequence(device=latents.device)
         pad = max(0, 4 - prompt_bars.batch_size) * 32
         for _ in range(pad):
             prompt.add_frame()
         for bar in prompt_bars:
             prompt += bar
         prediction = model.decoder.sample(
-            duration=prompt.duration + model.target_duration,
+            duration=prompt.duration + model.duration,
             prompt=prompt,
             condition=latents[i].unsqueeze(0),
         )
-        assert prediction.duration == prompt.duration + model.target_duration
+        assert prediction.duration == prompt.duration + model.duration
         result += prediction[:, prompt.length :]
     return result
 
@@ -36,7 +36,7 @@ def reconstruct_autoregressive(
     model: EncoderDecoder,
     latents: torch.Tensor,
     n_prompt_bars: int,
-    given_prompt_bars: list[SymbolicRepresentation] | None = None,
+    given_prompt_bars: list[TokenSequence] | None = None,
 ):
     """
     if given_prompt_bars is None, the first iterations the model will receive empty bars as prompts. It will feel
@@ -48,7 +48,7 @@ def reconstruct_autoregressive(
 
     if given_prompt_bars is None:
         for i in range(n_prompt_bars):
-            bar = SymbolicRepresentation(device=latents.device)
+            bar = TokenSequence(device=latents.device)
             for _ in range(32):
                 bar.add_frame()
             bars.append(bar)
@@ -59,33 +59,33 @@ def reconstruct_autoregressive(
         bars = given_prompt_bars.copy()
 
     for i in tqdm(range(len(latents)), desc="Generating..."):
-        prompt = SymbolicRepresentation.cat_time(bars[i : i + n_prompt_bars])
+        prompt = TokenSequence.cat_time(bars[i : i + n_prompt_bars])
 
         prediction = model.decoder.sample(
-            duration=prompt.duration + model.target_duration,
+            duration=prompt.duration + model.duration,
             prompt=prompt,
             condition=latents[i].unsqueeze(0),
         )
-        assert prediction.duration == prompt.duration + model.target_duration
+        assert prediction.duration == prompt.duration + model.duration
         bars.append(prediction[:, prompt.length :])
 
     if given_prompt_bars is None:
         # remove the padding bars
-        return SymbolicRepresentation.cat_time(bars[n_prompt_bars:])
+        return TokenSequence.cat_time(bars[n_prompt_bars:])
     else:
-        return SymbolicRepresentation.cat_time(bars)
+        return TokenSequence.cat_time(bars)
 
 
 class EvaluateVAEResult(TypedDict):
-    reconst_ind: SymbolicRepresentation
-    reconst: SymbolicRepresentation
-    reconst_sampled_latent: SymbolicRepresentation
-    gt: SymbolicRepresentation
+    reconst_ind: TokenSequence
+    reconst: TokenSequence
+    reconst_sampled_latent: TokenSequence
+    gt: TokenSequence
 
 
 def evaluate_vae(
     model: EncoderDecoder,
-    eval_ds: Sequence[SymbolicRepresentation],
+    eval_ds: Sequence[TokenSequence],
     num_samples: int,
     out_dir: Path | None = None,
     max_bars: int = 100,
@@ -96,9 +96,7 @@ def evaluate_vae(
     result: list[EvaluateVAEResult] = []
 
     for sample_idx in range(num_samples):
-        batch: SymbolicRepresentation = eval_ds[random.randint(0, len(eval_ds) - 1)].to(
-            device
-        )
+        batch: TokenSequence = eval_ds[random.randint(0, len(eval_ds) - 1)].to(device)
 
         if len(batch) > max_bars:
             batch = batch[:max_bars]
@@ -132,7 +130,7 @@ def evaluate_vae(
                 out_dir / f"reconst/reconst_sampled_latent_{sample_idx}.mid",
             )
 
-        gt = SymbolicRepresentation(device=device)
+        gt = TokenSequence(device=device)
         for bar in batch:
             gt += bar
         if out_dir is not None:

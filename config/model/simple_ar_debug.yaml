@@ -2,10 +2,11 @@ type: simple_ar
 model:
   type: simple_ar
   duration: 256
-  max_seq_length: 896
+  max_tokens: 896
   pitch_range: [21, 109]
-  dim: 512
-  num_layers: 8
+  dim: 128
+  num_layers: 2
+  max_note_duration: 64
 training:
   seed: 0x517
   batch_size: 32

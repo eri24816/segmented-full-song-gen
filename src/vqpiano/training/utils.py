@@ -44,7 +44,10 @@ def init_env(args):
     dataloader_config.pin_memory = args.pin_memory
     dataloader_config.shuffle = model_config.training.shuffle
     dataloader_config.drop_last = model_config.training.drop_last
-    dataloader_config.persistent_workers = args.persistent_workers
+    if args.persistent_workers is not None:
+        dataloader_config.persistent_workers = args.persistent_workers
+    else:
+        dataloader_config.persistent_workers = args.num_workers > 0
 
     if args.test:
         logger.remove()

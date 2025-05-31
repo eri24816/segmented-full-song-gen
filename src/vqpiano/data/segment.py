@@ -7,7 +7,7 @@ import music_data_analysis
 import torch
 
 from vqpiano.data.pianoroll_dataset import FullSongPianorollDataset
-from vqpiano.models.representation import SymbolicRepresentation
+from vqpiano.models.token_sequence import TokenSequence
 
 
 def get_compose_order(segments: list[dict]):
@@ -80,6 +80,7 @@ def get_compose_order(segments: list[dict]):
 def create_testing_dataset(
     path: Path,
     max_duration: int = 100000000000,
+    min_duration: int = 0,
 ):
     def transform(song: music_data_analysis.Song):
         segments_info = song.read_json("segmentation")
@@ -95,7 +96,11 @@ def create_testing_dataset(
         return result
 
     ds = FullSongPianorollDataset(
-        path, transform=transform, max_duration=max_duration, split="test"
+        path,
+        transform=transform,
+        max_duration=max_duration,
+        split="test",
+        min_duration=min_duration,
     )
     return ds
 
@@ -225,6 +230,7 @@ def sample_training_segments(
 def transform(
     song: music_data_analysis.Song,
     bar_embedding_prop: str,
+    max_note_duration: int,
     max_context_duration: dict[str, int],
     max_tokens: int | None = None,
     max_tokens_rate: float | None = None,
@@ -241,12 +247,13 @@ def transform(
         pr = pr.slice(segment["start"], segment["end"])
         result[k] = {
             "pianoroll": pr,
-            "tokens": SymbolicRepresentation.from_pianorolls(
+            "tokens": TokenSequence.from_pianorolls(
                 [pr],
                 need_end_token=k == "target",
                 need_frame_tokens=k == "target",
                 max_tokens=max_tokens,
                 max_tokens_rate=max_tokens_rate,
+                max_note_duration=max_note_duration,
             ),
             "shift_from_song_start": segment["start"],  # absolute position in song
             "song_duration": song_duration,
@@ -289,7 +296,9 @@ def create_training_dataset(
     path: Path,
     max_context_duration: dict[str, int],
     bar_embedding_prop: str,
+    max_note_duration: int,
     max_duration: int = 100000000000,
+    min_duration: int = 0,
     max_tokens: int | None = None,
     max_tokens_rate: float | None = None,
     train_set_ratio: float = 0.9,
@@ -300,11 +309,13 @@ def create_training_dataset(
         max_tokens=max_tokens,
         max_tokens_rate=max_tokens_rate,
         max_context_duration=max_context_duration,
+        max_note_duration=max_note_duration,
     )
     ds = FullSongPianorollDataset(
         path,
         transform=_transform,
         max_duration=max_duration,
+        min_duration=min_duration,
         split="train",
         train_set_ratio=train_set_ratio,
     )

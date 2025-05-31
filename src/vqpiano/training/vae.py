@@ -10,7 +10,7 @@ from safetensors.torch import save_file
 from vqpiano.data.pianoroll_dataset import PianorollDataset
 from vqpiano.evaluate.vae import evaluate_vae
 from vqpiano.models.encoder_decoder import EncoderDecoder
-from vqpiano.models.representation import SymbolicRepresentation
+from vqpiano.models.token_sequence import TokenSequence
 from vqpiano.utils.data import iter_dataclass
 from vqpiano.utils.torch_utils.wandb import log_image, log_midi_as_audio
 
@@ -29,12 +29,12 @@ class VAETrainingWrapper(LT.LightningModule):
     ):
         super().__init__()
         self.example_input_array = {
-            "prompt": SymbolicRepresentation(
+            "prompt": TokenSequence(
                 token=torch.zeros(2, max_tokens_prompt, 2, dtype=torch.long),
                 token_type=torch.zeros(2, max_tokens_prompt, dtype=torch.long),
                 pos=torch.zeros(2, max_tokens_prompt, dtype=torch.long),
             ),
-            "target": SymbolicRepresentation(
+            "target": TokenSequence(
                 token=torch.zeros(2, max_tokens_target, 2, dtype=torch.long),
                 token_type=torch.zeros(2, max_tokens_target, dtype=torch.long),
                 pos=torch.zeros(2, max_tokens_target, dtype=torch.long),
@@ -61,7 +61,7 @@ class VAETrainingWrapper(LT.LightningModule):
 
     def training_step(
         self,
-        batch: tuple[SymbolicRepresentation, SymbolicRepresentation],
+        batch: tuple[TokenSequence, TokenSequence],
         batch_idx: int,
     ):
         self.model.train()
@@ -119,22 +119,22 @@ class VAEDemoCallback(LT.Callback):
             for bar in pr.iter_over_bars_pr(bar_length=32):
                 bars.append(bar)
 
-            result = SymbolicRepresentation.from_pianorolls(bars)
+            result = TokenSequence.from_pianorolls(bars)
 
             return result
 
-        class MyDataLoader(Sequence[SymbolicRepresentation]):
+        class MyDataLoader(Sequence[TokenSequence]):
             def __init__(
                 self,
                 dataset: PianorollDataset,
-                collate_fn: Callable[[list[Pianoroll]], SymbolicRepresentation],
+                collate_fn: Callable[[list[Pianoroll]], TokenSequence],
                 batch_size: int,
             ):
                 self.dataset = dataset
                 self.collate_fn = collate_fn
                 self.batch_size = batch_size
 
-            def __getitem__(self, index: int) -> SymbolicRepresentation:  # type: ignore
+            def __getitem__(self, index: int) -> TokenSequence:  # type: ignore
                 return self.collate_fn([self.dataset[index]])
 
             def __len__(self):
@@ -155,7 +155,7 @@ class VAEDemoCallback(LT.Callback):
         trainer,
         pl_module: VAETrainingWrapper,
         outputs,
-        batch: tuple[SymbolicRepresentation, SymbolicRepresentation],
+        batch: tuple[TokenSequence, TokenSequence],
         batch_idx,
     ):
         if pl_module.global_step % 4 == 0:
@@ -173,7 +173,7 @@ class VAEDemoCallback(LT.Callback):
             )[0]
 
             for name, sample in eval_result.items():
-                assert isinstance(sample, SymbolicRepresentation)
+                assert isinstance(sample, TokenSequence)
                 log_midi_as_audio(
                     sample.to_midi(min_pitch),
                     name,

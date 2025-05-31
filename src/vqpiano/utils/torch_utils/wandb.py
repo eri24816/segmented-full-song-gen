@@ -71,11 +71,11 @@ def log_pianoroll(
     step: int,
     save_dir: Path = Path(""),
     annotations: list[tuple[int, str]] = [],
-    extension: str = "jpg",
+    format: str = "jpg",
 ):
     save_dir = Path(wandb.run.dir) / save_dir  # type: ignore
     save_dir.mkdir(exist_ok=True)
-    img_path = save_dir / f"{name}_{step:08}.{extension}"
+    img_path = save_dir / f"{name}_{step:08}.{format}"
     if isinstance(pianoroll, Pianoroll):
         pianoroll = [pianoroll]
     pianorolls_to_img(pianoroll, img_path, annotations=annotations)

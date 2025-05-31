@@ -6,9 +6,9 @@ from lightning.fabric.utilities.rank_zero import rank_zero_only
 from safetensors.torch import save_file
 
 from vqpiano.models.token_generator import TokenGenerator
-from vqpiano.models.representation import SymbolicRepresentation
+from vqpiano.models.token_sequence import TokenSequence
 from vqpiano.utils.data import iter_dataclass
-from vqpiano.utils.torch_utils.wandb import log_image, log_midi_as_audio
+from vqpiano.utils.torch_utils.wandb import log_midi_as_audio, log_pianoroll
 
 
 class SimpleARTrainingWrapper(LT.LightningModule):
@@ -23,10 +23,10 @@ class SimpleARTrainingWrapper(LT.LightningModule):
     ):
         super().__init__()
         self.example_input_array = {
-            "x": SymbolicRepresentation(
-                token=torch.zeros(2, 16, 2, dtype=torch.long),
-                token_type=torch.zeros(2, 16, dtype=torch.long),
-                pos=torch.zeros(2, 16, dtype=torch.long),
+            "x": TokenSequence(
+                token=torch.zeros(3, 16, 3, dtype=torch.long),
+                token_type=torch.zeros(3, 16, dtype=torch.long),
+                pos=torch.zeros(3, 16, dtype=torch.long),
             )
         }
         self.model = model
@@ -55,7 +55,7 @@ class SimpleARTrainingWrapper(LT.LightningModule):
         for k, v in iter_dataclass(loss):
             if isinstance(v, torch.Tensor):
                 v = v.detach().cpu().item()
-            metrics[f"reconst/{k}"] = v
+            metrics[f"generation/{k}"] = v
         self.log_dict(metrics)
 
         return loss.total_loss
@@ -83,7 +83,7 @@ class SimpleARDemoCallback(LT.Callback):
         trainer,
         pl_module: SimpleARTrainingWrapper,
         outputs,
-        batch: SymbolicRepresentation,
+        batch: TokenSequence,
         batch_idx,
     ):
         if pl_module.global_step % 4 == 0:
@@ -92,10 +92,14 @@ class SimpleARDemoCallback(LT.Callback):
             pl_module.model.eval()
 
             min_pitch = pl_module.model.pitch_range[0]
-            sample = pl_module.model.sample(duration=self.duration)
-            log_midi_as_audio(sample.to_midi(min_pitch), "audio", pl_module.global_step)
-            log_image(
-                sample.to_pianoroll(min_pitch).to_img_tensor(),
-                "pr",
-                pl_module.global_step,
+            sample = pl_module.model.sample(duration=self.duration, progress_bar=True)
+            log_midi_as_audio(
+                sample.to_midi(min_pitch), "generation", pl_module.global_step
             )
+            log_pianoroll(
+                [sample.to_pianoroll(min_pitch)],
+                "generation_pr",
+                pl_module.global_step,
+                format="png",
+            )
+

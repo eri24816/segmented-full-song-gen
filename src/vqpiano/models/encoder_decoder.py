@@ -8,8 +8,7 @@ from torch import Tensor
 
 from .feature_extractor import FeatureExtractor
 from .token_generator import TokenGenerator
-from .representation import SymbolicRepresentation
-from tqdm import tqdm
+from .token_sequence import TokenSequence
 
 
 @dataclass
@@ -105,23 +104,19 @@ class EncoderDecoder(nn.Module):
         encoder,
         decoder,
         bottleneck,
-        target_duration: int,
-        prompt_duration: int,
+        duration: int,
         max_tokens_target: int,
-        max_tokens_prompt: int,
         pitch_range: list[int],
     ):
         super().__init__()
 
-        self.target_duration = target_duration
-        self.prompt_duration = prompt_duration
-        self.max_tokens_target = max_tokens_target
-        self.max_tokens_prompt = max_tokens_prompt
+        self.duration = duration
+        self.max_tokens = max_tokens_target
         self.pitch_range = pitch_range
 
         self.encoder: FeatureExtractor = encoder
-        self.decoder: TokenGenerator = decoder
         self.bottleneck: Callable[[Tensor], Tuple[Tensor, BottleneckLoss]] = bottleneck
+        self.decoder: TokenGenerator = decoder
 
     def set_step(self, step: int):
         if isinstance(self.bottleneck, VAEBottleneck):
@@ -129,11 +124,10 @@ class EncoderDecoder(nn.Module):
 
     def forward(
         self,
-        target: SymbolicRepresentation,
-        prompt: SymbolicRepresentation,
+        x: TokenSequence,
         handcrafted_latent: torch.Tensor | None = None,
     ):
-        target_embed = self.encoder(target)  # b, d
+        target_embed = self.encoder(x)  # b, d
 
         latent, bottleneck_loss = self.bottleneck(target_embed)  # b, d
 
@@ -141,31 +135,14 @@ class EncoderDecoder(nn.Module):
             latent = torch.cat([latent, handcrafted_latent], dim=-1)  # b, d + d_hard
 
         # then, predict target
-        reconstruction_loss = self.decoder.forward(
-            x=target, prompt=prompt, condition=latent
-        )
+        reconstruction_loss = self.decoder.forward(x=x, condition=latent)
         return EncoderDecoder.Loss(
             total_loss=reconstruction_loss.total_loss + bottleneck_loss.total_loss,
             reconstruction=reconstruction_loss,
             bottleneck=bottleneck_loss,
         )
 
-    @torch.no_grad()
-    def reconstruct(
-        self,
-        target: SymbolicRepresentation,
-        prompt: SymbolicRepresentation,
-        sample_latent: bool = True,
-    ):
-        latent = self.encode(target, sample_latent)
-
-        return self.decoder.sample(
-            duration=prompt.duration + target.duration,
-            prompt=prompt,
-            condition=latent,
-        )
-
-    def encode(self, x: SymbolicRepresentation, sample_latent: bool = False):
+    def encode(self, x: TokenSequence, sample_latent: bool = False):
         if isinstance(self.bottleneck, VAEBottleneck):
             latent, _ = self.bottleneck(self.encoder(x), sample_latent)
         else:
@@ -174,10 +151,17 @@ class EncoderDecoder(nn.Module):
         return latent
 
     @torch.no_grad()
-    def sample(self, prompt: SymbolicRepresentation, duration: int, latent: Tensor):
-        return self.decoder.sample(
-            duration=prompt.duration + duration, prompt=prompt, condition=latent
-        )
+    def decode(self, latent: Tensor):
+        return self.decoder.sample(duration=self.duration, condition=latent)
+
+    @torch.no_grad()
+    def reconstruct(
+        self,
+        x: TokenSequence,
+        sample_latent: bool = True,
+    ):
+        latent = self.encode(x, sample_latent)
+        return self.decode(latent)
 
     """
     Applications
@@ -198,55 +182,10 @@ class EncoderDecoder(nn.Module):
         bars = list(pianoroll.iter_over_bars_pr())
         for i in range(0, len(bars), max_batch_size):
             batch = bars[i : i + max_batch_size]
-            repr = SymbolicRepresentation.from_pianorolls(batch, device=device)
+            repr = TokenSequence.from_pianorolls(batch, device=device)
             with torch.no_grad():
                 latent = self.encode(repr)
             result_batches.append(latent)
 
         latent = torch.cat(result_batches, dim=0)
         return latent
-
-    @torch.no_grad()
-    def decode_autoregressive(
-        self,
-        latents: torch.Tensor,
-        n_prompt_bars: int,
-        given_prompt_bars: list[SymbolicRepresentation] | None = None,
-    ):
-        """
-        latents: bar, d
-        if given_prompt_bars is None, the first iterations the model will receive empty bars as prompts. It will feel
-        generating the beginning of the piece.
-
-        To make the model generate bars from the middle of the piece, pass the previous bars as given_prompt_bars.
-        """
-        bars = []
-
-        if given_prompt_bars is None:
-            for i in range(n_prompt_bars):
-                bar = SymbolicRepresentation(device=latents.device)
-                for _ in range(32):
-                    bar.add_frame()
-                bars.append(bar)
-        else:
-            assert len(given_prompt_bars) == n_prompt_bars, (
-                f"{len(given_prompt_bars)} != {n_prompt_bars}"
-            )
-            bars = given_prompt_bars.copy()
-
-        for i, latent in enumerate(tqdm(latents, desc="Decoding...")):
-            prompt = SymbolicRepresentation.cat_time(bars[i : i + n_prompt_bars])
-
-            prediction = self.decoder.sample(
-                duration=prompt.duration + self.target_duration,
-                prompt=prompt,
-                condition=latent.unsqueeze(0),
-            )
-            assert prediction.duration == prompt.duration + self.target_duration
-            bars.append(prediction[:, prompt.length :])
-
-        if given_prompt_bars is None:
-            # remove the padding bars
-            return SymbolicRepresentation.cat_time(bars[n_prompt_bars:])
-        else:
-            return SymbolicRepresentation.cat_time(bars)

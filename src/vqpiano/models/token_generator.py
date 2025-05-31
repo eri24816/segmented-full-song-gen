@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 from loguru import logger
 from torch import Tensor
+from tqdm import tqdm
 
 from .network import MLP
 
@@ -13,7 +14,7 @@ from .pe import (
     one_hot_positional_encoding,
     sinusoidal_positional_encoding,
 )
-from .representation import SymbolicRepresentation
+from .token_sequence import TokenSequence
 
 
 def nucleus_sample(logits: torch.Tensor, p: float) -> torch.Tensor:
@@ -42,7 +43,7 @@ def nucleus_sample(logits: torch.Tensor, p: float) -> torch.Tensor:
 
 class TokenGenerator(nn.Module):
     """
-    Autoregressively generate a sequence of tokens.
+    A transformer decoder that autoregressively generate a sequence of tokens.
     """
 
     @dataclass
@@ -71,7 +72,7 @@ class TokenGenerator(nn.Module):
         num_layers: int,
         pitch_range: list[int],
         num_pos: int,
-        num_duration: int,
+        max_note_duration: int,
         condition_dim: int = 0,
     ):
         super().__init__()
@@ -85,7 +86,7 @@ class TokenGenerator(nn.Module):
             num_layers=num_layers,
             pitch_range=pitch_range,
             num_pos=num_pos,
-            num_duration=num_duration,
+            max_note_duration=max_note_duration,
             reduce=False,
             condition_dim=condition_dim,
             is_causal=True,
@@ -95,7 +96,7 @@ class TokenGenerator(nn.Module):
         self.out_pitch_emb = nn.Embedding(self.num_pitch, dim)
         self.velocity_classifier = MLP(dim, 256, 128, 0)
         self.out_velocity_emb = nn.Embedding(128, dim)
-        self.duration_classifier = MLP(dim, 256, num_duration, 0)
+        self.duration_classifier = MLP(dim, 256, max_note_duration, 0)
 
         sinusoidal_pe = sinusoidal_positional_encoding(num_pos, dim - 5 - 32)
         binary_pe = binary_positional_encoding(num_pos, 5)
@@ -107,8 +108,8 @@ class TokenGenerator(nn.Module):
 
     def forward(
         self,
-        x: SymbolicRepresentation,
-        prompt: SymbolicRepresentation | None = None,
+        x: TokenSequence,
+        prompt: TokenSequence | None = None,
         condition: torch.Tensor | None = None,
     ) -> Loss:
         if prompt is not None:
@@ -142,7 +143,7 @@ class TokenGenerator(nn.Module):
         out_velocity_emb = self.out_velocity_emb(target.velocity)
         duration_logits = self.duration_classifier(
             feature + out_pitch_emb + out_velocity_emb
-        )  # (batch_size, num_tokens-1, num_duration)
+        )  # (batch_size, num_tokens-1, max_note_duration)
 
         assert token_type_logits.shape[:-1] == target.token_type.shape
         assert pitch_logits.shape[:-1] == target.pitch.shape
@@ -248,8 +249,9 @@ class TokenGenerator(nn.Module):
         self,
         duration: int,
         max_length: int | None = None,
-        prompt: SymbolicRepresentation | None = None,
+        prompt: TokenSequence | None = None,
         condition: torch.Tensor | None = None,
+        progress_bar: bool = False,
     ):
         """
         autoregressive sampling
@@ -267,11 +269,14 @@ class TokenGenerator(nn.Module):
         if prompt is not None:
             output = prompt.clone()
         else:
-            output = SymbolicRepresentation(device=next(iter(self.parameters())).device)
+            output = TokenSequence(device=next(iter(self.parameters())).device)
 
         current_pos = output.duration
 
         output.add_frame()  # the "start token"
+
+        if progress_bar:
+            pbar = tqdm(total=duration - output.duration)
 
         last_pitch_in_frame = None
         for i in range(output.length, max_length):
@@ -280,6 +285,8 @@ class TokenGenerator(nn.Module):
                 logger.warning("Generated sequence is too long. Pruning.")
                 for _ in range(duration - output.duration):
                     output.add_frame()
+                    if progress_bar:
+                        pbar.update(1)
                 break
 
             feature = self.feature_extractor(output, condition)  # (b=1, length, dim)
@@ -288,7 +295,7 @@ class TokenGenerator(nn.Module):
             ]  # (class)
             token_type_pred = nucleus_sample(token_type_logits, 0.95)  # scalar
 
-            if token_type_pred == SymbolicRepresentation.FRAME:  # frame
+            if token_type_pred == TokenSequence.FRAME:  # frame
                 current_pos += 1
 
                 if current_pos >= duration:
@@ -297,7 +304,10 @@ class TokenGenerator(nn.Module):
                 output.add_frame()
                 last_pitch_in_frame = None
 
-            elif token_type_pred == SymbolicRepresentation.NOTE:  # note
+                if progress_bar:
+                    pbar.update(1)
+
+            elif token_type_pred == TokenSequence.NOTE:  # note
                 # sample pitch
                 pitch_logits = self.pitch_classifier(feature[:, -1, :])[0]  # (class)
                 # predicted pitch must ascend in the same frame
@@ -309,6 +319,8 @@ class TokenGenerator(nn.Module):
                         if current_pos >= duration:
                             break  # last frame token is ommitted
                         output.add_frame()
+                        if progress_bar:
+                            pbar.update(1)
                         last_pitch_in_frame = None
                         continue
                     pitch_logits[: last_pitch_in_frame + 1] = -float("inf")

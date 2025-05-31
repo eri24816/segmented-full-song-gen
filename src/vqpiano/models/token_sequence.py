@@ -1,5 +1,5 @@
+from collections import defaultdict
 from typing import Self, Sequence, cast
-import loguru
 import torch
 from music_data_analysis import Note, Pianoroll
 from torch import Tensor
@@ -11,12 +11,12 @@ Tensorable = Tensor | int | float | list[int | float]
 
 def tokenize(
     pr: Pianoroll,
+    max_note_duration: int,
     max_length: int | None = None,
     pitch_range: list[int] = [21, 109],
     pad: bool = False,
     need_end_token: bool = False,
     need_frame_tokens: bool = True,
-    max_note_duration: int = 64,
 ):
     """
     token type:
@@ -38,7 +38,10 @@ def tokenize(
         last_note_of_pitch = {}
         notes_with_successor = []
         for note in bar:
-            if note.pitch in last_note_of_pitch and last_note_of_pitch[note.pitch].offset == note.onset:
+            if (
+                note.pitch in last_note_of_pitch
+                and last_note_of_pitch[note.pitch].offset == note.onset
+            ):
                 notes_with_successor.append(last_note_of_pitch[note.pitch])
             last_note_of_pitch[note.pitch] = note
 
@@ -64,6 +67,8 @@ def tokenize(
             else:
                 duration = cast(int, note.offset) - note.onset
                 assert duration > 0
+                if duration >= max_note_duration:
+                    duration = max_note_duration - 1
 
             assert note.pitch >= pitch_range[0] and note.pitch <= pitch_range[1]
             tokens.append([note.pitch - pitch_range[0], note.velocity, duration])
@@ -78,7 +83,9 @@ def tokenize(
 
     # end token is a frame token with pos 0.
     if need_end_token:
-        assert need_frame_tokens, "if need_end_token is True, need_frame_tokens must be True"
+        assert need_frame_tokens, (
+            "if need_end_token is True, need_frame_tokens must be True"
+        )
         tokens.append([0, 0, 0])
         token_types.append(0)
         pos.append(0)
@@ -108,8 +115,11 @@ def tokenize(
     return tokens, token_types, pos
 
 
-class SymbolicRepresentation:
+class TokenSequence:
     """
+
+    Represent a sequence of notes with a sequence of tokens. Batched.
+
     Example:
     ```python
         pr1 = Pianoroll(
@@ -163,6 +173,7 @@ class SymbolicRepresentation:
     def from_pianorolls(
         cls,
         batch: list[Pianoroll],
+        max_note_duration: int,
         max_tokens: int | None = None,
         max_tokens_rate: float | None = None,
         device: torch.device | str = torch.device("cpu"),
@@ -175,7 +186,9 @@ class SymbolicRepresentation:
         """
 
         if max_tokens_rate is not None:
-            assert max_tokens is None, "max_tokens and max_tokens_rate cannot be both provided"
+            assert max_tokens is None, (
+                "max_tokens and max_tokens_rate cannot be both provided"
+            )
             max_tokens = int(max(pr.duration for pr in batch) * max_tokens_rate)
 
         tokens_batch = []
@@ -183,7 +196,11 @@ class SymbolicRepresentation:
         pos_batch = []
         for pr in batch:
             tokens, token_types, pos = tokenize(
-                pr, max_length=max_tokens, need_end_token=need_end_token, need_frame_tokens=need_frame_tokens
+                pr,
+                max_note_duration=max_note_duration,
+                max_length=max_tokens,
+                need_end_token=need_end_token,
+                need_frame_tokens=need_frame_tokens,
             )
             tokens_batch.append(tokens)
             token_types_batch.append(token_types)
@@ -203,6 +220,7 @@ class SymbolicRepresentation:
         cls,
         batch: list[Pianoroll],
         slices: Sequence[slice],
+        max_note_duration: int,
         max_tokens: Sequence[int | None] | None = None,
         need_end_token: list[bool] | None = None,
     ) -> list[Self]:
@@ -221,11 +239,14 @@ class SymbolicRepresentation:
         token_types_all: list[list[Tensor]] = [[] for _ in range(len(slices))]
         pos_all: list[list[Tensor]] = [[] for _ in range(len(slices))]
         for pr in batch:
-            for i, (max_token, slice, need_end_token_item) in enumerate(zip(max_tokens, slices, need_end_token)):
+            for i, (max_token, slice, need_end_token_item) in enumerate(
+                zip(max_tokens, slices, need_end_token)
+            ):
                 tokens, token_types, pos = tokenize(
                     pr.slice(slice.start, slice.stop),
                     max_length=max_token,
                     need_end_token=need_end_token_item,
+                    max_note_duration=max_note_duration,
                 )
                 tokens_all[i].append(tokens)
                 token_types_all[i].append(token_types)
@@ -242,20 +263,22 @@ class SymbolicRepresentation:
         return result
 
     @classmethod
-    def cat_batch(cls, batch: list["SymbolicRepresentation"]):
+    def cat_batch(cls, batch: list["TokenSequence"]):
         """
         Concatenate a list of SymbolicRepresentation objects in batch dim.
         """
         result = cls(
             device=batch[0].device,
             token=pad_and_cat([item.token for item in batch], pad_dim=1, cat_dim=0),
-            token_type=pad_and_cat([item.token_type for item in batch], pad_dim=1, pad_value=-1),
+            token_type=pad_and_cat(
+                [item.token_type for item in batch], pad_dim=1, pad_value=-1
+            ),
             pos=pad_and_cat([item.pos for item in batch], pad_dim=1),
         )
         return result
 
     @classmethod
-    def cat_time(cls, batch: list["SymbolicRepresentation"]):
+    def cat_time(cls, batch: list["TokenSequence"]):
         """
         Concatenate a list of SymbolicRepresentation objects in time dim.
         """
@@ -293,7 +316,9 @@ class SymbolicRepresentation:
         if not isinstance(pos, torch.Tensor):
             pos = torch.tensor(pos)
 
-        assert token.shape[0:1] == token_type.shape[0:1] == pos.shape[0:1], "batch size or length mismatch"
+        assert token.shape[0:1] == token_type.shape[0:1] == pos.shape[0:1], (
+            "batch size or length mismatch"
+        )
 
         self.token = token
         self.token_type = token_type
@@ -345,8 +370,8 @@ class SymbolicRepresentation:
     def shape(self):
         return (self.batch_size, self.length)
 
-    def __add__(self, other: "SymbolicRepresentation"):
-        return SymbolicRepresentation(
+    def __add__(self, other: "TokenSequence"):
+        return TokenSequence(
             cat_to_right(self.token, other.token, dim=1),
             cat_to_right(self.token_type, other.token_type, dim=1),
             cat_to_right(self.pos, other.pos + self.duration * ~other.is_pad, dim=1),
@@ -369,11 +394,13 @@ class SymbolicRepresentation:
         if new_pos.numel() > 0:
             new_pos = new_pos - new_pos[new_token_type != self.PAD].min()
 
-        return SymbolicRepresentation(new_token, new_token_type, new_pos, self.device)
+        return TokenSequence(new_token, new_token_type, new_pos, self.device)
 
     def slice_pos(self, start: int | None, end: int | None):
         assert self.batch_size == 1, "slice is only supported for batch size 1"
-        start_idx = torch.searchsorted(self.pos[0], start) if start is not None else None
+        start_idx = (
+            torch.searchsorted(self.pos[0], start) if start is not None else None
+        )
         end_idx = torch.searchsorted(self.pos[0], end) if end is not None else None
         return self[:, start_idx:end_idx]
 
@@ -386,11 +413,13 @@ class SymbolicRepresentation:
 
     def add_frame(self):
         self.pos = cat_to_right(self.pos, self.duration, dim=1)
-        self.token = cat_to_right(self.token, [0, 0], dim=1)
+        self.token = cat_to_right(self.token, [0, 0, 0], dim=1)
         self.token_type = cat_to_right(self.token_type, 0, dim=1)
         return self
 
-    def add_note(self, pitch: int | Tensor, velocity: int | Tensor, duration: int | Tensor):
+    def add_note(
+        self, pitch: int | Tensor, velocity: int | Tensor, duration: int | Tensor
+    ):
         self.pos = cat_to_right(self.pos, self.duration - 1, dim=1)
         self.token = cat_to_right(self.token, [pitch, velocity, duration], dim=1)
         self.token_type = cat_to_right(self.token_type, self.NOTE, dim=1)
@@ -398,7 +427,7 @@ class SymbolicRepresentation:
 
     def add_pad(self):
         self.pos = cat_to_right(self.pos, 0, dim=1)
-        self.token = cat_to_right(self.token, [0, 0], dim=1)
+        self.token = cat_to_right(self.token, [0, 0, 0], dim=1)
         self.token_type = cat_to_right(self.token_type, self.PAD, dim=1)
         return self
 
@@ -410,27 +439,74 @@ class SymbolicRepresentation:
         return self
 
     def clone(self):
-        return SymbolicRepresentation(self.token.clone(), self.token_type.clone(), self.pos.clone(), self.device)
+        return TokenSequence(
+            self.token.clone(), self.token_type.clone(), self.pos.clone(), self.device
+        )
 
     def shift_pos(self, shift: int):
         self.pos = self.pos + shift * ~self.is_pad
         return self
 
-    def to_pianoroll(self, min_pitch: int, batch_item: int = 0) -> Pianoroll:
+    def to_pianoroll(
+        self,
+        min_pitch: int = 21,
+        batch_item: int = 0,
+        frames_per_beat: int = 8,
+        beats_per_bar: int = 4,
+    ) -> Pianoroll:
         notes: list[Note] = []
+        durations: list[int] = []
         for i in range(self.token_type.shape[1]):
             if self.token_type[batch_item, i] == self.NOTE:
                 time = self.pos[batch_item, i].item()
-                pitch = self.token[batch_item, i, 0].item()
-                velocity = self.token[batch_item, i, 1].item()
+                pitch = self.pitch[batch_item, i].item()
+                velocity = self.velocity[batch_item, i].item()
+                duration = self.note_duration[batch_item, i].item()
                 assert isinstance(time, int)
                 assert isinstance(pitch, int)
                 assert isinstance(velocity, int)
-                notes.append(Note(onset=time, pitch=pitch + min_pitch, velocity=velocity))
+                assert isinstance(duration, int)
+                notes.append(
+                    Note(onset=time, pitch=pitch + min_pitch, velocity=velocity)
+                )
+                durations.append(duration)
 
-        return Pianoroll(notes, duration=self.duration)
+        # apply note duration
 
-    def to_midi(self, min_pitch: int, path=None, apply_pedal=True, bpm=105):
+        notes_per_pitch = defaultdict(list)
+        for note in notes:
+            notes_per_pitch[note.pitch].append(note)
+
+        successors = {}
+        for pitch, notes_of_pitch in notes_per_pitch.items():
+            for i in range(len(notes_of_pitch)):
+                if i == len(notes_of_pitch) - 1:
+                    successors[notes_of_pitch[i]] = None
+                else:
+                    successors[notes_of_pitch[i]] = notes_of_pitch[i + 1]
+
+        frames_per_bar = frames_per_beat * beats_per_bar
+        for i in range(len(notes)):
+            if durations[i] == 0:
+                if successors[notes[i]] is not None:
+                    # hold until the next note
+                    notes[i].offset = successors[notes[i]].onset
+                else:
+                    # hold until the end of the bar
+                    notes[i].offset = (
+                        (notes[i].onset + frames_per_bar) // frames_per_bar
+                    ) * frames_per_bar
+            else:
+                notes[i].offset = notes[i].onset + durations[i]
+
+        return Pianoroll(
+            notes,
+            duration=self.duration,
+            beats_per_bar=beats_per_bar,
+            frames_per_beat=frames_per_beat,
+        )
+
+    def to_midi(self, min_pitch: int, path=None, apply_pedal=False, bpm=105):
         pianoroll = self.to_pianoroll(min_pitch)
         return pianoroll.to_midi(path, apply_pedal, bpm)
 
@@ -479,135 +555,17 @@ class SymbolicRepresentation:
             for row in table:
                 row[col] = row[col].center(max_length)
 
-        result = "SymbolicRepresentation(\n  " + "\n  ".join(["  ".join(row) for row in table]) + "\n)"
+        result = (
+            "SymbolicRepresentation(\n  "
+            + "\n  ".join(["  ".join(row) for row in table])
+            + "\n)"
+        )
         if self.batch_size > max_batch_size:
             result += "\n..."
         return result
 
 
-class FrameGroupedRepresentation:
-    @classmethod
-    def from_pianoroll(
-        cls,
-        pianoroll: Pianoroll,
-        num_pitch: int = 88,
-        max_notes_in_frame: int = 10,
-        device: torch.device | str = torch.device("cpu"),
-        min_pitch: int = 21,
-    ):
-        frame_grouped_notes = [[] for _ in range(pianoroll.duration)]
-        for note in pianoroll.notes:
-            frame_grouped_notes[note.onset].append(note)
-
-        max_notes_in_frame = min(max_notes_in_frame, max(len(notes) for notes in frame_grouped_notes))
-
-        pitch = []
-        velocity = []
-
-        def construct_pitch_frame(notes: list[Note]):
-            END_OF_FRAME = num_pitch
-            PAD = -1
-            pitch_frame = []
-            for note in notes:
-                pitch_frame.append(note.pitch - min_pitch)
-
-            # add END_OF_FRAME token
-            if len(pitch_frame) < max_notes_in_frame:
-                pitch_frame.append(END_OF_FRAME)
-
-            # pad with END_OF_FRAME token
-            while len(pitch_frame) < max_notes_in_frame:
-                pitch_frame.append(PAD)
-
-            return pitch_frame
-
-        def construct_velocity_frame(notes: list[Note]):
-            END_OF_FRAME = 128
-            PAD = -1
-            velocity_frame = []
-            for note in notes:
-                velocity_frame.append(note.velocity)
-
-            # add END_OF_FRAME token
-            if len(velocity_frame) < max_notes_in_frame:
-                velocity_frame.append(END_OF_FRAME)
-
-            # pad with 0
-            while len(velocity_frame) < max_notes_in_frame:
-                velocity_frame.append(PAD)
-
-            return velocity_frame
-
-        truncate_count = 0
-        for notes in frame_grouped_notes:
-            if len(notes) > max_notes_in_frame:
-                truncate_count += len(notes) - max_notes_in_frame
-                notes = notes[:max_notes_in_frame]
-
-            pitch.append(construct_pitch_frame(notes))
-            velocity.append(construct_velocity_frame(notes))
-
-        if truncate_count > 0:
-            loguru.logger.warning(f"Truncated {truncate_count} notes from {pianoroll}")
-
-        pitch = torch.tensor(pitch, device=device).unsqueeze(0)
-        velocity = torch.tensor(velocity, device=device).unsqueeze(0)
-
-        return cls(pitch, velocity, num_pitch)
-
-    @property
-    def is_regular(self):
-        return (~self.is_pad) & (~self.is_end_of_frame)
-
-    @property
-    def is_pad(self):
-        return self.pitch == self.PAD
-
-    @property
-    def is_end_of_frame(self):
-        return self.pitch == self.END_OF_FRAME
-
-    def __init__(self, pitch: torch.Tensor, velocity: torch.Tensor, num_pitch: int = 88):
-        """
-        pitch: (batch, frame, note)
-        velocity: (batch, frame, note)
-        """
-        self.PAD = -1
-        self.END_OF_FRAME = num_pitch
-
-        self.num_pitch = num_pitch
-        self.pitch = pitch
-        self.velocity = velocity
-
-        assert pitch.shape == velocity.shape
-
-    def __len__(self):
-        return self.pitch.shape[1]
-
-    def __getitem__(self, index: slice | tuple[slice, ...]):
-        return FrameGroupedRepresentation(self.pitch[index], self.velocity[index], self.num_pitch)
-
-
 if __name__ == "__main__":
-    # pr1 = Pianoroll(
-    #     [
-    #         Note(onset=0, pitch=60, velocity=100),
-    #         Note(onset=3, pitch=60, velocity=100),
-    #         Note(onset=3, pitch=62, velocity=100),
-    #         Note(onset=4, pitch=60, velocity=100),
-    #         Note(onset=4, pitch=62, velocity=100),
-    #         # test truncate
-    #         *[Note(onset=5, pitch=i, velocity=100) for i in range(15)],
-    #     ],
-    #     duration=6,
-    # )
-
-    # rep = FrameGroupedRepresentation.from_pianoroll(pr1)
-    # print(rep.pitch)
-    # print(rep.velocity)
-    # print(rep.is_pad)
-    # print(rep.is_end_of_frame)
-
     pr1 = Pianoroll(
         [
             Note(onset=0, pitch=60, velocity=100, offset=3),
@@ -619,4 +577,29 @@ if __name__ == "__main__":
         ],
         duration=32,
     )
-    print(SymbolicRepresentation.from_pianorolls([pr1], need_frame_tokens=False))
+    print(TokenSequence.from_pianorolls([pr1], need_frame_tokens=False))
+    print(
+        TokenSequence.from_pianorolls([pr1], need_frame_tokens=False)
+        .to_pianoroll()
+        .notes
+    )
+    assert (
+        TokenSequence.from_pianorolls([pr1], need_frame_tokens=False)
+        .to_pianoroll()
+        .notes
+        == pr1.notes
+    )
+    assert (
+        TokenSequence.from_pianorolls([pr1], need_frame_tokens=True)
+        .to_pianoroll()
+        .notes
+        == pr1.notes
+    )
+    assert (
+        TokenSequence.from_pianorolls(
+            [pr1], need_frame_tokens=True, need_end_token=True
+        )
+        .to_pianoroll()
+        .notes
+        == pr1.notes
+    )
