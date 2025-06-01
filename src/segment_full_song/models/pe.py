@@ -2,7 +2,7 @@ import math
 
 import torch
 import torch.nn as nn
-from vqpiano.utils.torch_utils.shape_guard import shape_guard
+from segment_full_song.utils.torch_utils.shape_guard import shape_guard
 from torch import Tensor
 
 def sinusoidal_positional_encoding(length, dim, base=10000.0):

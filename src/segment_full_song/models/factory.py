@@ -3,15 +3,15 @@ from typing import Callable, Tuple, cast
 from omegaconf import OmegaConf
 from torch import Tensor
 
-from vqpiano.models.encoder_decoder import (
+from segment_full_song.models.encoder_decoder import (
     BottleneckLoss,
     EncoderDecoder,
     VAEBottleneck,
     identity_bottleneck,
 )
-from vqpiano.models.feature_extractor import FeatureExtractor
-from vqpiano.models.token_generator import TokenGenerator
-from vqpiano.models.segment_full_song import SegmentFullSongModel
+from segment_full_song.models.feature_extractor import FeatureExtractor
+from segment_full_song.models.token_generator import TokenGenerator
+from segment_full_song.models.segment_full_song import SegmentFullSongModel
 
 
 def create_model(config):

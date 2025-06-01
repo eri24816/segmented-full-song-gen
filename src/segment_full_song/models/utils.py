@@ -5,7 +5,7 @@ import numpy as np
 import torch
 from safetensors.torch import load_file
 
-from vqpiano.models.gen.lm import BaseLM
+from segment_full_song.models.gen.lm import BaseLM
 
 
 def unwrap_lightning_state_dict(state_dict: dict):

@@ -11,7 +11,7 @@ from lightning.pytorch.loggers.wandb import WandbLogger
 from loguru import logger
 from omegaconf import OmegaConf
 import matplotlib
-from vqpiano.env import TEST_BATCH_SIZE, TEST_NUM_WORKERS
+from segment_full_song.env import TEST_BATCH_SIZE, TEST_NUM_WORKERS
 
 
 class ExceptionCallback(LT.Callback):

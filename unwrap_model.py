@@ -4,8 +4,8 @@ from pathlib import Path
 
 import torch
 
-from vqpiano.models.factory import create_model
-from vqpiano.training.factory import create_training_wrapper
+from segment_full_song.models.factory import create_model
+from segment_full_song.training.factory import create_training_wrapper
 
 
 def export_model(ckpt_path: Path, save_dir: Path, prefix: str):

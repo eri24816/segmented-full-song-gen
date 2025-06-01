@@ -6,7 +6,7 @@ from loguru import logger
 from torch import Tensor
 from tqdm import tqdm
 
-from vqpiano.utils.torch_utils.shape_guard import shape_guard
+from segment_full_song.utils.torch_utils.shape_guard import shape_guard
 
 from .network import MLP
 

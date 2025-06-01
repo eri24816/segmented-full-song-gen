@@ -10,7 +10,7 @@ from .network import MLP
 
 from .token_sequence import TokenSequence
 from .pe import one_hot_positional_encoding, StartEndPosEmb
-from vqpiano.utils.torch_utils.tensor_op import cat_to_right, pad_to_length
+from segment_full_song.utils.torch_utils.tensor_op import cat_to_right, pad_to_length
 
 import x_transformers
 

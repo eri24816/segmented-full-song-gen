@@ -1,13 +1,13 @@
 from typing import Any
-from vqpiano.config_types import ModelAndTrainingParams
-from vqpiano.data.factory import (
+from segment_full_song.config_types import ModelAndTrainingParams
+from segment_full_song.data.factory import (
     SimpleARDatasetParams,
     create_dataloader_simple_ar_reconstruct,
 )
-from vqpiano.evaluate import evaluate_simple_ar
-from vqpiano.models.encoder_decoder import EncoderDecoder
-from vqpiano.models.utils import load_ckpt_state_dict
-from vqpiano.utils.env import init_env
+from segment_full_song.evaluate import evaluate_simple_ar
+from segment_full_song.models.encoder_decoder import EncoderDecoder
+from segment_full_song.models.utils import load_ckpt_state_dict
+from segment_full_song.utils.env import init_env
 import argparse
 from pathlib import Path
 

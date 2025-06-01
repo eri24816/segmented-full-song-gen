@@ -1,14 +1,14 @@
 from torch.utils.data import Dataset
 
-from vqpiano.training.segment_full_song import (
+from segment_full_song.training.segment_full_song import (
     SegmentFullSongDemoCallback,
     SegmentFullSongTrainingWrapper,
 )
-from vqpiano.training.simple_ar import (
+from segment_full_song.training.simple_ar import (
     SimpleARDemoCallback,
     SimpleARTrainingWrapper,
 )
-from vqpiano.training.vae import (
+from segment_full_song.training.vae import (
     VAEDemoCallback,
     VAETrainingWrapper,
 )

@@ -1,3 +1,3 @@
-PROJECT_NAME = "vqpiano"
+PROJECT_NAME = "segment_full_song"
 TEST_BATCH_SIZE = 1
 TEST_NUM_WORKERS = 0

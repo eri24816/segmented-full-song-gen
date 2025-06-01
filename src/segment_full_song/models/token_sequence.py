@@ -4,7 +4,11 @@ import torch
 from music_data_analysis import Note, Pianoroll
 from torch import Tensor
 
-from vqpiano.utils.torch_utils.tensor_op import cat_to_right, pad_and_cat, pad_and_stack
+from segment_full_song.utils.torch_utils.tensor_op import (
+    cat_to_right,
+    pad_and_cat,
+    pad_and_stack,
+)
 
 Tensorable = Tensor | int | float | list[int | float]
 

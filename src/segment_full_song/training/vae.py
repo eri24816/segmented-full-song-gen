@@ -8,10 +8,10 @@ from lightning.fabric.utilities.rank_zero import rank_zero_only
 from safetensors.torch import save_file
 
 from torch.utils.data import Dataset
-from vqpiano.models.encoder_decoder import EncoderDecoder
-from vqpiano.models.token_sequence import TokenSequence
-from vqpiano.utils.data import iter_dataclass
-from vqpiano.utils.torch_utils.wandb import log_image, log_midi_as_audio
+from segment_full_song.models.encoder_decoder import EncoderDecoder
+from segment_full_song.models.token_sequence import TokenSequence
+from segment_full_song.utils.data import iter_dataclass
+from segment_full_song.utils.torch_utils.wandb import log_image, log_midi_as_audio
 
 
 class VAETrainingWrapper(LT.LightningModule):

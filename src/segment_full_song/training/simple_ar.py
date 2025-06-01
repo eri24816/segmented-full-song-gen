@@ -5,10 +5,10 @@ import torch
 from lightning.fabric.utilities.rank_zero import rank_zero_only
 from safetensors.torch import save_file
 
-from vqpiano.models.token_generator import TokenGenerator
-from vqpiano.models.token_sequence import TokenSequence
-from vqpiano.utils.data import iter_dataclass
-from vqpiano.utils.torch_utils.wandb import log_midi_as_audio, log_pianoroll
+from segment_full_song.models.token_generator import TokenGenerator
+from segment_full_song.models.token_sequence import TokenSequence
+from segment_full_song.utils.data import iter_dataclass
+from segment_full_song.utils.torch_utils.wandb import log_midi_as_audio, log_pianoroll
 
 
 class SimpleARTrainingWrapper(LT.LightningModule):

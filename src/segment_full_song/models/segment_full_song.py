@@ -7,18 +7,18 @@ from loguru import logger
 from torch import Tensor
 from tqdm import tqdm
 
-from vqpiano.data.segment import get_context_for_target_segment
-from vqpiano.models.network import MLP
+from segment_full_song.data.segment import get_context_for_target_segment
+from segment_full_song.models.network import MLP
 
-from vqpiano.models.encoder_decoder import EncoderDecoder, VAEBottleneck
-from vqpiano.models.feature_extractor import FeatureExtractor
-from vqpiano.models.pe import (
+from segment_full_song.models.encoder_decoder import EncoderDecoder, VAEBottleneck
+from segment_full_song.models.feature_extractor import FeatureExtractor
+from segment_full_song.models.pe import (
     StartEndPosEmb,
 )
-from vqpiano.models.token_sequence import TokenSequence
+from segment_full_song.models.token_sequence import TokenSequence
 import x_transformers
 
-from vqpiano.utils.torch_utils.shape_guard import shape_guard
+from segment_full_song.utils.torch_utils.shape_guard import shape_guard
 
 DEBUG = True
 
@@ -965,7 +965,7 @@ class SegmentFullSongModel(nn.Module):
 
 # def test():
 #     device = "cpu"
-#     from vqpiano.models.factory import create_model
+#     from segment_full_song.models.factory import create_model
 
 #     encoder_decoder = cast(
 #         EncoderDecoder,

@@ -1,12 +1,12 @@
 from pathlib import Path
 from omegaconf import OmegaConf
 import torch
-from vqpiano.data.dataset import FullSongPianorollDataset
-from vqpiano.models.factory import create_model
+from segment_full_song.data.dataset import FullSongPianorollDataset
+from segment_full_song.models.factory import create_model
 
-from vqpiano.models.encoder_decoder import EncoderDecoder
-from vqpiano.models.token_sequence import TokenSequence
-from vqpiano.models.utils import load_ckpt_state_dict
+from segment_full_song.models.encoder_decoder import EncoderDecoder
+from segment_full_song.models.token_sequence import TokenSequence
+from segment_full_song.models.utils import load_ckpt_state_dict
 
 import argparse
 import loguru

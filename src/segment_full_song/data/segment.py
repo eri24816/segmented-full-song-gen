@@ -6,8 +6,8 @@ import numpy as np
 import music_data_analysis
 import torch
 
-from vqpiano.data.dataset import FullSongPianorollDataset
-from vqpiano.models.token_sequence import TokenSequence
+from segment_full_song.data.dataset import FullSongPianorollDataset
+from segment_full_song.models.token_sequence import TokenSequence
 
 
 def get_compose_order(segments: list[dict]):
@@ -323,7 +323,7 @@ def create_training_dataset(
 
 
 if __name__ == "__main__":
-    # from vqpiano.data.factory import pr_dataset_collate_fn
+    # from segment_full_song.data.factory import pr_dataset_collate_fn
 
     # ds = create_training_dataset(
     #     Path("link/dataset/pop80k_k"),

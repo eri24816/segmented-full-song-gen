@@ -7,14 +7,14 @@ from lightning.pytorch.callbacks import ModelCheckpoint
 from loguru import logger
 
 import wandb
-from vqpiano.data.factory import create_dataloader
-from vqpiano.env import PROJECT_NAME
-from vqpiano.models.factory import create_model
-from vqpiano.training.factory import (
+from segment_full_song.data.factory import create_dataloader
+from segment_full_song.env import PROJECT_NAME
+from segment_full_song.models.factory import create_model
+from segment_full_song.training.factory import (
     create_demo_callback,
     create_training_wrapper,
 )
-from vqpiano.training.utils import (
+from segment_full_song.training.utils import (
     ExceptionCallback,
     ModelConfigEmbedderCallback,
     get_training_strategy,

@@ -68,7 +68,7 @@
             "name": "Python: Train segment",
             "type": "debugpy",
             "request": "launch",
-            "program": "src/vqpiano/training/main.py",
+            "program": "src/segment_full_song/training/main.py",
             "args": [
                 "--model_config",
                 "config/simple_ar/model_segment_full_song.yaml",

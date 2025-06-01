@@ -4,15 +4,15 @@ import music_data_analysis
 import torch
 import torch.utils.data
 
-from vqpiano.data.dataset import PianorollDataset
-from vqpiano.data.segment import (
+from segment_full_song.data.dataset import PianorollDataset
+from segment_full_song.data.segment import (
     create_testing_dataset as create_segment_testing_dataset,
 )
-from vqpiano.data.segment import (
+from segment_full_song.data.segment import (
     create_training_dataset as create_segment_training_dataset,
 )
-from vqpiano.models.token_sequence import TokenSequence
-from vqpiano.utils.torch_utils.tensor_op import pad_and_stack
+from segment_full_song.models.token_sequence import TokenSequence
+from segment_full_song.utils.torch_utils.tensor_op import pad_and_stack
 
 
 def collate_fn(batch):
