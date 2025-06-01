@@ -142,7 +142,6 @@ class SegmentFullSongDemoCallback(LT.Callback):
             gt = self.test_ds[random.randint(0, len(self.test_ds) - 1)]
 
             segment_info_list = gt["segments"]
-            pr: Pianoroll = gt["pr"]
 
             segment_info_list = gt["segments"]
 
@@ -166,10 +165,17 @@ class SegmentFullSongDemoCallback(LT.Callback):
                 for segment_info in segment_info_list
             ]
 
-            # first segment is given
-            given_segments = [
-                pr[segment_info_list[0]["start"] : segment_info_list[0]["end"]]
-            ]
+            use_given_segments = (step // self.demo_every) % 2 == 0
+            if use_given_segments:
+                # first segment is given
+
+                pr: Pianoroll = gt["pr"]
+                given_segments = [
+                    pr[segment_info_list[0]["start"] : segment_info_list[0]["end"]]
+                ]
+            else:
+                # generate from scratch
+                given_segments = []
 
             try:
                 generated_song, annotations = pl_module.model.sample_song(
@@ -178,19 +184,29 @@ class SegmentFullSongDemoCallback(LT.Callback):
                     compose_order=compose_order,
                     given_segments=given_segments,
                 )
+
                 # log generated segment
                 log_midi_as_audio(
-                    generated_song.to_midi(markers=annotations), "audio", step
+                    generated_song.to_midi(markers=annotations), "generation", step
                 )
-                log_midi_as_audio(pr.to_midi(markers=annotations), "audio_gt", step)
+                if use_given_segments:
+                    log_midi_as_audio(pr.to_midi(markers=annotations), "gt", step)
 
-                log_pianoroll(
-                    [pr, generated_song],
-                    "pr",
-                    step,
-                    annotations=annotations,
-                    format="png",
-                )
+                    log_pianoroll(
+                        [pr, generated_song],
+                        "pr",
+                        step,
+                        annotations=annotations,
+                        format="png",
+                    )
+                else:
+                    log_pianoroll(
+                        generated_song,
+                        "pr",
+                        step,
+                        annotations=annotations,
+                        format="png",
+                    )
 
             except Exception:
                 loguru.logger.error(traceback.format_exc())

@@ -122,7 +122,7 @@ class VAEDemoCallback(LT.Callback):
             ]["pianoroll"]
 
             n_iter = pr.duration // pl_module.model.duration
-            result = []
+            reconst_result = []
             for i in range(n_iter):
                 bar = pr.slice(
                     i * pl_module.model.duration, (i + 1) * pl_module.model.duration
@@ -132,9 +132,27 @@ class VAEDemoCallback(LT.Callback):
                     max_tokens=pl_module.model.max_tokens,
                     max_note_duration=pl_module.model.encoder.max_note_duration,
                 ).to(pl_module.device)
-                result.append(pl_module.model.reconstruct(input))
+                reconst_result.append(
+                    pl_module.model.reconstruct(input, sample_latent=False)
+                )
 
-            result = TokenSequence.cat_time(result)
+            reconst_result = TokenSequence.cat_time(reconst_result)
+
+            sampled_reconst_result = []
+            for i in range(n_iter):
+                bar = pr.slice(
+                    i * pl_module.model.duration, (i + 1) * pl_module.model.duration
+                )
+                input = TokenSequence.from_pianorolls(
+                    [bar],
+                    max_tokens=pl_module.model.max_tokens,
+                    max_note_duration=pl_module.model.encoder.max_note_duration,
+                ).to(pl_module.device)
+                sampled_reconst_result.append(
+                    pl_module.model.reconstruct(input, sample_latent=True)
+                )
+
+            sampled_reconst_result = TokenSequence.cat_time(sampled_reconst_result)
 
             log_midi_as_audio(
                 pr.to_midi(),
@@ -148,12 +166,23 @@ class VAEDemoCallback(LT.Callback):
             )
 
             log_midi_as_audio(
-                result.to_midi(min_pitch),
+                reconst_result.to_midi(min_pitch),
                 "reconst",
                 pl_module.global_step,
             )
             log_image(
-                result.to_pianoroll(min_pitch).to_img_tensor(),
+                reconst_result.to_pianoroll(min_pitch).to_img_tensor(),
                 "reconst_pr",
+                pl_module.global_step,
+            )
+
+            log_midi_as_audio(
+                sampled_reconst_result.to_midi(min_pitch),
+                "sampled_reconst",
+                pl_module.global_step,
+            )
+            log_image(
+                sampled_reconst_result.to_pianoroll(min_pitch).to_img_tensor(),
+                "sampled_reconst_pr",
                 pl_module.global_step,
             )

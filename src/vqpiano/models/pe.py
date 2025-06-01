@@ -51,8 +51,8 @@ class StartEndPosEmb(nn.Module):
     @shape_guard(
         shift_from_start="b",
         duration="b",
-        pos="b f",
-        _output="b f d",
+        pos="b n",
+        _output="b n d",
     )
     def forward(self, shift_from_start: Tensor, duration: Tensor, pos: Tensor) -> Tensor:
         pos_from_start = pos + shift_from_start.unsqueeze(1)

@@ -1,7 +1,6 @@
 from dataclasses import dataclass
 from typing import Sequence, TypedDict, cast
-from music_data_analysis import Note, Pianoroll
-from omegaconf import OmegaConf
+from music_data_analysis import Pianoroll
 import torch
 import torch.nn as nn
 from loguru import logger
@@ -95,10 +94,12 @@ class SegmentFullSongModel(nn.Module):
         token_type_loss: Tensor
         pitch_loss: Tensor
         velocity_loss: Tensor
+        duration_loss: Tensor
         total_loss: Tensor
         pitch_acc: float
         velocity_acc: float
         token_type_acc: float
+        duration_acc: float
 
     class SegmentItem(TypedDict):
         tokens: TokenSequence  # (batch, length)
@@ -119,6 +120,7 @@ class SegmentFullSongModel(nn.Module):
         encoder_num_layers: int,
         decoder_num_layers: int,
         pitch_range: list[int],
+        max_note_duration: int,
         max_song_duration: int,
         max_forward_duration: int,
         max_context_duration: dict[str, int],
@@ -136,6 +138,7 @@ class SegmentFullSongModel(nn.Module):
         self.pitch_range = pitch_range
         self.num_pos = max_forward_duration
         self.num_pitch = pitch_range[1] - pitch_range[0]
+        self.max_note_duration = max_note_duration
         self.frames_per_bar = frames_per_bar
         self.max_forward_duration = max_forward_duration
         self.max_context_duration = max_context_duration
@@ -145,6 +148,7 @@ class SegmentFullSongModel(nn.Module):
             dim=dim,
             num_layers=encoder_num_layers,
             pitch_range=pitch_range,
+            max_note_duration=max_note_duration,
             num_pos=max_song_duration,
             reduce=False,
             is_causal=False,
@@ -154,6 +158,7 @@ class SegmentFullSongModel(nn.Module):
             dim=dim,
             num_layers=decoder_num_layers,
             pitch_range=pitch_range,
+            max_note_duration=max_note_duration,
             num_pos=max_song_duration,
             reduce=False,
             condition_dim=condition_dim + dim,  # add dim for global feature
@@ -172,6 +177,8 @@ class SegmentFullSongModel(nn.Module):
         self.pitch_classifier = nn.Linear(dim, self.num_pitch)
         self.out_pitch_emb = nn.Embedding(self.num_pitch, dim)
         self.velocity_classifier = MLP(dim, 256, 128, 0)
+        self.out_velocity_emb = nn.Embedding(128, dim)
+        self.duration_classifier = MLP(dim, 256, max_note_duration, 0)
 
         self.masked_bar_embedding = nn.Parameter(torch.randn(1, 1, latent_dim))
 
@@ -221,12 +228,12 @@ class SegmentFullSongModel(nn.Module):
         )
 
     @shape_guard(
-        bar_embeddings="b n self.latent_dim",
-        bar_embeddings_mask="b n",
+        bar_embeddings="b bar self.latent_dim",
+        bar_embeddings_mask="b bar",
         shift_from_song_start="b",
         song_duration="b",
-        pos="b f",
-        _output="b _ self.dim",
+        pos="b n",
+        _output="b n self.dim",
     )
     def encode_bar_embeddings(
         self,
@@ -277,6 +284,11 @@ class SegmentFullSongModel(nn.Module):
         assert (~tokens.is_pad).all(), f"tokens: {tokens}"
         return self.bar_embedder.encode(tokens)
 
+    @shape_guard(
+        x="b n",
+        bar_embeddings="b bar self.latent_dim",
+        bar_embeddings_mask="b bar",
+    )
     def forward(
         self,
         x: SegmentItem,
@@ -329,77 +341,83 @@ class SegmentFullSongModel(nn.Module):
         token_type_logits = self.token_type_classifier(
             feature
         )  # (batch_size, num_tokens-1, 2)
+
         pitch_logits = self.pitch_classifier(
             feature
         )  # (batch_size, num_tokens-1, vocab_size)
 
         # velocity classifier can see ground truth pitch
+        out_pitch_emb = self.out_pitch_emb(target.pitch)
         velocity_logits = self.velocity_classifier(
-            feature + self.out_pitch_emb(target.pitch)
+            feature + out_pitch_emb
         )  # (batch_size, num_tokens-1, 128)
+
+        # duration classifier can see ground truth pitch and velocity
+        out_velocity_emb = self.out_velocity_emb(target.velocity)
+        duration_logits = self.duration_classifier(
+            feature + out_pitch_emb + out_velocity_emb
+        )  # (batch_size, num_tokens-1, max_note_duration)
 
         assert token_type_logits.shape[:-1] == target.token_type.shape
         assert pitch_logits.shape[:-1] == target.pitch.shape
         assert velocity_logits.shape[:-1] == target.velocity.shape
+        assert duration_logits.shape[:-1] == target.note_duration.shape
 
-        token_type_loss = (
-            torch.nn.functional.cross_entropy(
-                token_type_logits.transpose(1, 2),
-                target.token_type,
-                ignore_index=-1,
-                reduction="none",
-            )  # (batch_size, num_tokens-1)
-            .sum(dim=1)  # sum over tokens to get -log(p(x))
-            .mean()  # average over batch
-        )
-        pitch_loss = (
-            (
-                torch.nn.functional.cross_entropy(
-                    pitch_logits.transpose(1, 2),
-                    target.pitch,
-                    ignore_index=-1,
-                    reduction="none",
+        @shape_guard(logits="b n c", target="b n", mask="b n")
+        def calculate_categorical_loss(logits, target, mask, ignore_index=-1):
+            return (
+                (
+                    torch.nn.functional.cross_entropy(
+                        logits.transpose(1, 2),
+                        target,
+                        ignore_index=ignore_index,
+                        reduction="none",
+                    )
+                    * mask
                 )
-                * target.is_note
+                .sum(dim=1)
+                .mean()
             )
-            .sum(dim=1)
-            .mean()
-        )
-        velocity_loss = (
-            (
-                torch.nn.functional.cross_entropy(
-                    velocity_logits.transpose(1, 2),
-                    target.velocity,
-                    ignore_index=-1,
-                    reduction="none",
-                )
-                * target.is_note
-            )
-            .sum(dim=1)
-            .mean()
-        )
-        total_loss = token_type_loss + pitch_loss + velocity_loss
 
-        token_type_acc = (
-            (token_type_logits.detach().argmax(dim=2) == target.token_type)
-            .float()
-            .mean()
-            .item()
+        token_type_loss = calculate_categorical_loss(
+            token_type_logits, target.token_type, target.is_frame + target.is_note
         )
-        pitch_acc = (
-            ((pitch_logits.detach().argmax(dim=2) == target.pitch) * target.is_note)
-            .float()
-            .mean()
-            .item()
+
+        pitch_loss = calculate_categorical_loss(
+            pitch_logits, target.pitch, target.is_note
         )
-        velocity_acc = (
-            (
-                (velocity_logits.detach().argmax(dim=2) == target.velocity)
-                * target.is_note
-            )
-            .float()
-            .mean()
-            .item()
+
+        velocity_loss = calculate_categorical_loss(
+            velocity_logits, target.velocity, target.is_note
+        )
+
+        duration_loss = calculate_categorical_loss(
+            duration_logits, target.note_duration, target.is_note
+        )
+
+        total_loss = token_type_loss + pitch_loss + velocity_loss + duration_loss
+
+        @shape_guard(logits="b n c", target="b n", mask="b n")
+        def calculate_categorical_acc(logits, target, mask):
+            return (
+                ((logits.detach().argmax(dim=2) == target) * mask).float().sum()
+                / mask.sum()
+            ).item()
+
+        token_type_acc = calculate_categorical_acc(
+            token_type_logits, target.token_type, target.is_frame + target.is_note
+        )
+
+        pitch_acc = calculate_categorical_acc(
+            pitch_logits, target.pitch, target.is_note
+        )
+
+        velocity_acc = calculate_categorical_acc(
+            velocity_logits, target.velocity, target.is_note
+        )
+
+        duration_acc = calculate_categorical_acc(
+            duration_logits, target.note_duration, target.is_note
         )
 
         return SegmentFullSongModel.Loss(
@@ -407,9 +425,11 @@ class SegmentFullSongModel(nn.Module):
             token_type_loss=token_type_loss,
             pitch_loss=pitch_loss,
             velocity_loss=velocity_loss,
+            duration_loss=duration_loss,
             token_type_acc=token_type_acc,
             pitch_acc=pitch_acc,
             velocity_acc=velocity_acc,
+            duration_acc=duration_acc,
         )
 
     @torch.no_grad()
@@ -532,12 +552,20 @@ class SegmentFullSongModel(nn.Module):
                 pitch_pred = nucleus_sample(pitch_logits, 0.95)  # scalar
 
                 # sample velocity
+                out_pitch_emb = self.out_pitch_emb(pitch_pred.unsqueeze(0))
                 velocity_logits = self.velocity_classifier(
-                    feature[:, -1, :] + self.out_pitch_emb(pitch_pred.unsqueeze(0))
+                    feature[:, -1, :] + out_pitch_emb
                 )[0]  # (class)
                 velocity_pred = nucleus_sample(velocity_logits, 0.95)  # scalar
 
-                output.add_note(pitch_pred, velocity_pred)
+                # sample duration
+                out_velocity_emb = self.out_velocity_emb(velocity_pred.unsqueeze(0))
+                duration_logits = self.duration_classifier(
+                    feature[:, -1, :] + out_pitch_emb + out_velocity_emb
+                )[0]  # (class)
+                duration_pred = nucleus_sample(duration_logits, 0.95)  # scalar
+
+                output.add_note(pitch_pred, velocity_pred, duration_pred)
                 last_pitch_in_frame = pitch_pred
 
             else:
@@ -760,6 +788,7 @@ class SegmentFullSongModel(nn.Module):
                                     pos_in_segment, pos_in_segment + self.frames_per_bar
                                 )
                             ],
+                            max_note_duration=self.max_note_duration,
                             device=device,
                             max_tokens_rate=self.max_tokens_rate,
                         )
@@ -853,6 +882,7 @@ class SegmentFullSongModel(nn.Module):
                         "tokens": TokenSequence.from_pianorolls(
                             [context_pr],
                             need_frame_tokens=False,
+                            max_note_duration=self.max_note_duration,
                             device=device,
                             max_tokens_rate=self.max_tokens_rate,
                         ),
@@ -933,137 +963,137 @@ class SegmentFullSongModel(nn.Module):
         return full_song, annotations
 
 
-def test():
-    device = "cpu"
-    from vqpiano.models.factory import create_model
+# def test():
+#     device = "cpu"
+#     from vqpiano.models.factory import create_model
 
-    encoder_decoder = cast(
-        EncoderDecoder,
-        create_model(OmegaConf.load("config/simple_ar/model_vae.yaml").model),
-    )
-    from safetensors.torch import load_file
+#     encoder_decoder = cast(
+#         EncoderDecoder,
+#         create_model(OmegaConf.load("config/simple_ar/model_vae.yaml").model),
+#     )
+#     from safetensors.torch import load_file
 
-    encoder_decoder.load_state_dict(
-        load_file(
-            "wandb/run-20250404_013005-i41ffa2m/files/checkpoints/epoch=4-step=1000000.safetensors",
-            device=device,
-        )
-    )
+#     encoder_decoder.load_state_dict(
+#         load_file(
+#             "wandb/run-20250404_013005-i41ffa2m/files/checkpoints/epoch=4-step=1000000.safetensors",
+#             device=device,
+#         )
+#     )
 
-    model = SegmentFullSongModel(
-        bar_embedder=encoder_decoder,
-        dim=128,
-        encoder_num_layers=6,
-        decoder_num_layers=6,
-        pitch_range=[21, 108],
-        max_forward_duration=32 * 8,
-        max_song_duration=32 * 256,
-        max_context_duration={"left": 32, "right": 32, "seed": 32, "reference": 32},
-        max_tokens_rate=4.5,
-        latent_dim=128,
-        frames_per_bar=32,
-        condition_dim=0,
-    ).to(device)
+#     model = SegmentFullSongModel(
+#         bar_embedder=encoder_decoder,
+#         dim=128,
+#         encoder_num_layers=6,
+#         decoder_num_layers=6,
+#         pitch_range=[21, 108],
+#         max_forward_duration=32 * 8,
+#         max_song_duration=32 * 256,
+#         max_context_duration={"left": 32, "right": 32, "seed": 32, "reference": 32},
+#         max_tokens_rate=4.5,
+#         latent_dim=128,
+#         frames_per_bar=32,
+#         condition_dim=0,
+#     ).to(device)
 
-    context: Sequence[SegmentFullSongModel.SegmentItem] = [
-        {
-            "tokens": TokenSequence.from_pianorolls(
-                [
-                    Pianoroll([Note(0, 60, 100), Note(3, 62, 100)]),
-                ]
-            ).to(device),
-            "shift_from_song_start": torch.tensor([32]).to(device),
-            "segment_duration": torch.tensor([32 * 8]).to(device),
-            "shift_from_segment_start": torch.tensor([0]).to(device),
-            "song_duration": torch.tensor([1024]).to(device),
-        },
-        {
-            "tokens": TokenSequence.from_pianorolls(
-                [
-                    Pianoroll(
-                        [Note(20, 60, 100), Note(23, 62, 100), Note(28, 62, 100)]
-                    ),
-                ]
-            ).to(device),
-            "shift_from_song_start": torch.tensor([-32]).to(device),
-            "segment_duration": torch.tensor([32 * 8]).to(device),
-            "shift_from_segment_start": torch.tensor([0]).to(device),
-            "song_duration": torch.tensor([1024]).to(device),
-        },
-    ]
+#     context: Sequence[SegmentFullSongModel.SegmentItem] = [
+#         {
+#             "tokens": TokenSequence.from_pianorolls(
+#                 [
+#                     Pianoroll([Note(0, 60, 100), Note(3, 62, 100)]),
+#                 ]
+#             ).to(device),
+#             "shift_from_song_start": torch.tensor([32]).to(device),
+#             "segment_duration": torch.tensor([32 * 8]).to(device),
+#             "shift_from_segment_start": torch.tensor([0]).to(device),
+#             "song_duration": torch.tensor([1024]).to(device),
+#         },
+#         {
+#             "tokens": TokenSequence.from_pianorolls(
+#                 [
+#                     Pianoroll(
+#                         [Note(20, 60, 100), Note(23, 62, 100), Note(28, 62, 100)]
+#                     ),
+#                 ]
+#             ).to(device),
+#             "shift_from_song_start": torch.tensor([-32]).to(device),
+#             "segment_duration": torch.tensor([32 * 8]).to(device),
+#             "shift_from_segment_start": torch.tensor([0]).to(device),
+#             "song_duration": torch.tensor([1024]).to(device),
+#         },
+#     ]
 
-    model.eval()
-    output, _ = model.sample_song(
-        labels="ABAB",
-        lengths_in_bars=[1, 2, 10, 12],
-        compose_order=[0, 1, 3, 2],
-        given_segments=[
-            Pianoroll([Note(0, 60, 100), Note(3, 28, 100)]),
-            Pianoroll([Note(20, 60, 100), Note(23, 62, 100), Note(61, 62, 100)]),
-        ],
-    )
-    output.to_midi("output.mid")
+#     model.eval()
+#     output, _ = model.sample_song(
+#         labels="ABAB",
+#         lengths_in_bars=[1, 2, 10, 12],
+#         compose_order=[0, 1, 3, 2],
+#         given_segments=[
+#             Pianoroll([Note(0, 60, 100), Note(3, 28, 100)]),
+#             Pianoroll([Note(20, 60, 100), Note(23, 62, 100), Note(61, 62, 100)]),
+#         ],
+#     )
+#     output.to_midi("output.mid")
 
-    context: Sequence[SegmentFullSongModel.SegmentItem] = [
-        {
-            "tokens": TokenSequence.from_pianorolls(
-                [
-                    Pianoroll([Note(0, 60, 100), Note(3, 62, 100)]),
-                    Pianoroll([Note(0, 60, 100), Note(61, 62, 100)]),
-                ]
-            ).to(device),
-            "shift_from_song_start": torch.tensor([32, 128]).to(device),
-            "segment_duration": torch.tensor([32 * 8, 32 * 8]).to(device),
-            "shift_from_segment_start": torch.tensor([0, 0]).to(device),
-            "song_duration": torch.tensor([1024, 1024]).to(device),
-        },
-        {
-            "tokens": TokenSequence.from_pianorolls(
-                [
-                    Pianoroll(
-                        [Note(20, 60, 100), Note(23, 62, 100), Note(28, 62, 100)]
-                    ),
-                    Pianoroll([Note(20, 60, 100), Note(23, 62, 100)]),
-                ]
-            ).to(device),
-            "shift_from_song_start": torch.tensor([128, 64]).to(device),
-            "segment_duration": torch.tensor([32 * 8, 32 * 8]).to(device),
-            "shift_from_segment_start": torch.tensor([0, 0]).to(device),
-            "song_duration": torch.tensor([1024, 1024]).to(device),
-        },
-    ]
+#     context: Sequence[SegmentFullSongModel.SegmentItem] = [
+#         {
+#             "tokens": TokenSequence.from_pianorolls(
+#                 [
+#                     Pianoroll([Note(0, 60, 100), Note(3, 62, 100)]),
+#                     Pianoroll([Note(0, 60, 100), Note(61, 62, 100)]),
+#                 ]
+#             ).to(device),
+#             "shift_from_song_start": torch.tensor([32, 128]).to(device),
+#             "segment_duration": torch.tensor([32 * 8, 32 * 8]).to(device),
+#             "shift_from_segment_start": torch.tensor([0, 0]).to(device),
+#             "song_duration": torch.tensor([1024, 1024]).to(device),
+#         },
+#         {
+#             "tokens": TokenSequence.from_pianorolls(
+#                 [
+#                     Pianoroll(
+#                         [Note(20, 60, 100), Note(23, 62, 100), Note(28, 62, 100)]
+#                     ),
+#                     Pianoroll([Note(20, 60, 100), Note(23, 62, 100)]),
+#                 ]
+#             ).to(device),
+#             "shift_from_song_start": torch.tensor([128, 64]).to(device),
+#             "segment_duration": torch.tensor([32 * 8, 32 * 8]).to(device),
+#             "shift_from_segment_start": torch.tensor([0, 0]).to(device),
+#             "song_duration": torch.tensor([1024, 1024]).to(device),
+#         },
+#     ]
 
-    x = TokenSequence.from_pianorolls(
-        [
-            Pianoroll([Note(0, 60, 100), Note(3, 62, 100), Note(3, 89, 100)]),
-            Pianoroll([Note(0, 60, 100), Note(61, 62, 100)]),
-        ]
-    ).to(device)
+#     x = TokenSequence.from_pianorolls(
+#         [
+#             Pianoroll([Note(0, 60, 100), Note(3, 62, 100), Note(3, 89, 100)]),
+#             Pianoroll([Note(0, 60, 100), Note(61, 62, 100)]),
+#         ]
+#     ).to(device)
 
-    x = SegmentFullSongModel.SegmentItem(
-        tokens=x,
-        shift_from_song_start=torch.tensor([0, 0]).to(device),
-        segment_duration=torch.tensor([32 * 8, 32 * 8]).to(device),
-        shift_from_segment_start=torch.tensor([0, 0]).to(device),
-        song_duration=torch.tensor([1024, 1024]).to(device),
-    )
+#     x = SegmentFullSongModel.SegmentItem(
+#         tokens=x,
+#         shift_from_song_start=torch.tensor([0, 0]).to(device),
+#         segment_duration=torch.tensor([32 * 8, 32 * 8]).to(device),
+#         shift_from_segment_start=torch.tensor([0, 0]).to(device),
+#         song_duration=torch.tensor([1024, 1024]).to(device),
+#     )
 
-    bar_embeddings = torch.zeros(
-        2,
-        16,
-        cast(VAEBottleneck, encoder_decoder.bottleneck).output_dim,
-        device=device,
-    )
-    bar_embeddings_mask = torch.ones(2, 16, device=device, dtype=torch.bool)
-    print(
-        model(
-            x=x,
-            context=context,
-            bar_embeddings=bar_embeddings,
-            bar_embeddings_mask=bar_embeddings_mask,
-        )
-    )
+#     bar_embeddings = torch.zeros(
+#         2,
+#         16,
+#         cast(VAEBottleneck, encoder_decoder.bottleneck).output_dim,
+#         device=device,
+#     )
+#     bar_embeddings_mask = torch.ones(2, 16, device=device, dtype=torch.bool)
+#     print(
+#         model(
+#             x=x,
+#             context=context,
+#             bar_embeddings=bar_embeddings,
+#             bar_embeddings_mask=bar_embeddings_mask,
+#         )
+#     )
 
 
-if __name__ == "__main__":
-    test()
+# if __name__ == "__main__":
+#     test()

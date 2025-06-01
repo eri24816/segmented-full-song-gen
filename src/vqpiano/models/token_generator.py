@@ -6,6 +6,8 @@ from loguru import logger
 from torch import Tensor
 from tqdm import tqdm
 
+from vqpiano.utils.torch_utils.shape_guard import shape_guard
+
 from .network import MLP
 
 from .feature_extractor import FeatureExtractor
@@ -150,63 +152,45 @@ class TokenGenerator(nn.Module):
         assert velocity_logits.shape[:-1] == target.velocity.shape
         assert duration_logits.shape[:-1] == target.note_duration.shape
 
-        token_type_loss = (
-            torch.nn.functional.cross_entropy(
-                token_type_logits.transpose(1, 2),
-                target.token_type,
-                ignore_index=-1,
-                reduction="none",
-            )  # (batch_size, num_tokens-1)
-            .sum(dim=1)  # sum over tokens to get -log(p(x))
-            .mean()  # average over batch
-        )
-        pitch_loss = (
-            (
-                torch.nn.functional.cross_entropy(
-                    pitch_logits.transpose(1, 2),
-                    target.pitch,
-                    ignore_index=-1,
-                    reduction="none",
+        @shape_guard(logits="b n c", target="b n", mask="b n")
+        def calculate_categorical_loss(logits, target, mask, ignore_index=-1):
+            return (
+                (
+                    torch.nn.functional.cross_entropy(
+                        logits.transpose(1, 2),
+                        target,
+                        ignore_index=ignore_index,
+                        reduction="none",
+                    )
+                    * mask
                 )
-                * target.is_note
+                .sum(dim=1)
+                .mean()
             )
-            .sum(dim=1)
-            .mean()
+
+        token_type_loss = calculate_categorical_loss(
+            token_type_logits, target.token_type, target.is_frame + target.is_note
         )
-        velocity_loss = (
-            (
-                torch.nn.functional.cross_entropy(
-                    velocity_logits.transpose(1, 2),
-                    target.velocity,
-                    ignore_index=-1,
-                    reduction="none",
-                )
-                * target.is_note
-            )
-            .sum(dim=1)
-            .mean()
+
+        pitch_loss = calculate_categorical_loss(
+            pitch_logits, target.pitch, target.is_note
         )
-        duration_loss = (
-            (
-                torch.nn.functional.cross_entropy(
-                    duration_logits.transpose(1, 2),
-                    target.note_duration,
-                    ignore_index=-1,
-                    reduction="none",
-                )
-                * target.is_note
-            )
-            .sum(dim=1)
-            .mean()
+
+        velocity_loss = calculate_categorical_loss(
+            velocity_logits, target.velocity, target.is_note
         )
+
+        duration_loss = calculate_categorical_loss(
+            duration_logits, target.note_duration, target.is_note
+        )
+
         total_loss = token_type_loss + pitch_loss + velocity_loss + duration_loss
 
-        def calculate_acc(logits, target, effective_mask):
+        @shape_guard(logits="b n c", target="b n", mask="b n")
+        def calculate_acc(logits, target, mask):
             return (
-                ((logits.detach().argmax(dim=2) == target) * effective_mask)
-                .float()
-                .sum()
-                / effective_mask.sum()
+                ((logits.detach().argmax(dim=2) == target) * mask).float().sum()
+                / mask.sum()
             ).item()
 
         token_type_acc = calculate_acc(

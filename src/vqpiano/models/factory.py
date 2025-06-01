@@ -28,7 +28,7 @@ def create_model(config):
     elif config.type == "segment_full_song":
         encoder_decoder = cast(
             EncoderDecoder,
-            create_model(OmegaConf.load("config/simple_ar/model_vae.yaml").model),
+            create_model(OmegaConf.load("config/model/vae.yaml").model),
         )
         from safetensors.torch import load_file
 
@@ -43,6 +43,7 @@ def create_model(config):
             bar_embedder=encoder_decoder,
             dim=config.dim,
             pitch_range=config.pitch_range,
+            max_note_duration=config.max_note_duration,
             encoder_num_layers=config.encoder_num_layers,
             decoder_num_layers=config.decoder_num_layers,
             max_forward_duration=config.max_forward_duration,
