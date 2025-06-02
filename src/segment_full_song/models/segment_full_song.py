@@ -124,7 +124,7 @@ class SegmentFullSongModel(nn.Module):
         max_song_duration: int,
         max_forward_duration: int,
         max_context_duration: dict[str, int],
-        max_tokens_rate: float,
+        max_tokens: int,
         latent_dim: int,
         frames_per_bar: int,
         condition_dim: int = 0,
@@ -142,7 +142,7 @@ class SegmentFullSongModel(nn.Module):
         self.frames_per_bar = frames_per_bar
         self.max_forward_duration = max_forward_duration
         self.max_context_duration = max_context_duration
-        self.max_tokens_rate = max_tokens_rate
+        self.max_tokens = max_tokens
         self.latent_dim = latent_dim
         self.encoder = FeatureExtractor(
             dim=dim,
@@ -153,6 +153,7 @@ class SegmentFullSongModel(nn.Module):
             reduce=False,
             is_causal=False,
             cross_attend=False,
+            use_start_end_pos=True,
         )
         self.decoder = FeatureExtractor(
             dim=dim,
@@ -164,6 +165,7 @@ class SegmentFullSongModel(nn.Module):
             condition_dim=condition_dim + dim,  # add dim for global feature
             is_causal=True,
             cross_attend=True,
+            use_start_end_pos=True,
         )
 
         self.global_vision = GlobalVision(
@@ -285,7 +287,6 @@ class SegmentFullSongModel(nn.Module):
         return self.bar_embedder.encode(tokens)
 
     @shape_guard(
-        x="b n",
         bar_embeddings="b bar self.latent_dim",
         bar_embeddings_mask="b bar",
     )
@@ -790,7 +791,7 @@ class SegmentFullSongModel(nn.Module):
                             ],
                             max_note_duration=self.max_note_duration,
                             device=device,
-                            max_tokens_rate=self.max_tokens_rate,
+                            max_tokens=self.max_tokens,
                         )
                     )
                 )
@@ -884,7 +885,7 @@ class SegmentFullSongModel(nn.Module):
                             need_frame_tokens=False,
                             max_note_duration=self.max_note_duration,
                             device=device,
-                            max_tokens_rate=self.max_tokens_rate,
+                            max_tokens=self.max_tokens,
                         ),
                         "song_duration": torch.tensor([full_duration], device=device),
                         "shift_from_song_start": torch.tensor(

@@ -28,15 +28,7 @@ def create_model(config):
     elif config.type == "segment_full_song":
         encoder_decoder = cast(
             EncoderDecoder,
-            create_model(OmegaConf.load("config/model/vae.yaml").model),
-        )
-        from safetensors.torch import load_file
-
-        encoder_decoder.load_state_dict(
-            load_file(
-                "wandb/run-20250404_013005-i41ffa2m/files/checkpoints/epoch=4-step=1000000.safetensors",
-                device="cuda",
-            )
+            create_model(OmegaConf.load(config.bar_embedder_config_path).model),
         )
 
         model = SegmentFullSongModel(
@@ -49,7 +41,7 @@ def create_model(config):
             max_forward_duration=config.max_forward_duration,
             max_song_duration=config.max_song_duration,
             max_context_duration=config.max_context_duration,
-            max_tokens_rate=config.max_tokens_rate,
+            max_tokens=config.max_tokens,
             latent_dim=config.latent_dim,
             frames_per_bar=config.frames_per_bar,
         )

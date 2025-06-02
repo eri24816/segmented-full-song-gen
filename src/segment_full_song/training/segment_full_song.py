@@ -21,10 +21,13 @@ class SegmentFullSongTrainingWrapper(LT.LightningModule):
         model: SegmentFullSongModel,
         pitch_range: list[int],
         lr,
+        max_tokens: int,
         betas: tuple[float, float] = (0.9, 0.999),
         eps: float = 1e-8,
         weight_decay: float = 0,
+        lr_scheduler_gamma: float = 1,
         accum_batches: int = 1,
+        continue_on_exception: bool = False,
     ):
         super().__init__()
         self.model = model
@@ -35,9 +38,12 @@ class SegmentFullSongTrainingWrapper(LT.LightningModule):
             "eps": eps,
             "weight_decay": weight_decay,
         }
+        self.lr_scheduler_config = {"gamma": lr_scheduler_gamma}
         self.automatic_optimization = False
-        self.actual_step = 0  # lightning fails to calculate right global_step for automatic_optimization = False
+        self.actual_step = -1  # lightning fails to calculate right global_step for automatic_optimization = False
         self.accum_batches = accum_batches
+        self.max_tokens = max_tokens
+        self.continue_on_exception = continue_on_exception
 
     def forward(self, **kwargs):
         return self.model(**kwargs)
@@ -47,11 +53,41 @@ class SegmentFullSongTrainingWrapper(LT.LightningModule):
             self.model.parameters(),
             **self.optim_config,
         )
-        return opt
+        if self.lr_scheduler_config["gamma"] != 1:
+            scheduler = torch.optim.lr_scheduler.ExponentialLR(
+                optimizer=opt,
+                gamma=self.lr_scheduler_config["gamma"],
+            )
+
+            return [opt], [scheduler]
+        else:
+            return opt
 
     def training_step(self, batch, batch_idx: int):
-        self.actual_step += 1
         self.model.train()
+        # print(
+        #     " ",
+        #     batch["target"]["tokens"].length,
+        #     batch["left"]["tokens"].length,
+        #     batch["right"]["tokens"].length,
+        #     batch["seed"]["tokens"].length,
+        #     batch["reference"]["tokens"].length,
+        # )
+
+        num_tokens = max(
+            batch["target"]["tokens"].length,
+            batch["left"]["tokens"].length,
+            batch["right"]["tokens"].length,
+            batch["seed"]["tokens"].length,
+            batch["reference"]["tokens"].length,
+        )
+        if num_tokens > self.max_tokens:
+            loguru.logger.info(
+                f"Skipping this batch because it's too long. {num_tokens} > {self.max_tokens}"
+            )
+            return None
+
+        self.actual_step += 1
         try:
             loss = self.model(
                 x=batch["target"],
@@ -65,6 +101,8 @@ class SegmentFullSongTrainingWrapper(LT.LightningModule):
                 bar_embeddings_mask=batch["bar_embeddings_mask"],
             )
         except Exception as e:
+            if not self.continue_on_exception:
+                raise e
             if isinstance(e, torch.cuda.OutOfMemoryError):
                 torch.cuda.empty_cache()
                 loguru.logger.warning("Out of memory. Skipping this batch.")
@@ -73,12 +111,6 @@ class SegmentFullSongTrainingWrapper(LT.LightningModule):
                 loguru.logger.error(traceback.format_exc())
                 return None
 
-        metrics = {}
-        for k, v in iter_dataclass(loss):
-            if isinstance(v, torch.Tensor):
-                v = v.detach().cpu().item()
-            metrics[f"reconst/{k}"] = v
-        self.log_dict(metrics)
 
         opt = cast(torch.optim.Optimizer, self.optimizers())
 
@@ -95,6 +127,20 @@ class SegmentFullSongTrainingWrapper(LT.LightningModule):
             opt.step()
             opt.zero_grad()
 
+        scheduler = cast(torch.optim.lr_scheduler.ExponentialLR, self.lr_schedulers())
+
+        if self.actual_step % 5 == 0:
+            metrics = {}
+            for k, v in iter_dataclass(loss):
+                if isinstance(v, torch.Tensor):
+                    v = v.detach().cpu().item()
+                metrics[k] = v
+            metrics["lr"] = scheduler.get_last_lr()[0]
+            metrics["actual_step"] = self.actual_step
+            self.log_dict(metrics)
+
+        scheduler.step()
+
     def export_model(self, save_dir: Path, prefix: str, use_safetensors=True):
         if use_safetensors:
             save_file(self.model.state_dict(), save_dir / f"{prefix}.safetensors")
@@ -110,7 +156,6 @@ class SegmentFullSongDemoCallback(LT.Callback):
         demo_every: int,
         test_ds: torch.utils.data.Dataset,
         max_context_duration: dict[str, int],
-        # max_tokens_rate: float,
         max_tokens: int,
     ):
         super().__init__()
@@ -136,7 +181,7 @@ class SegmentFullSongDemoCallback(LT.Callback):
             >= torch.cuda.get_device_properties(0).total_memory * 0.95
         ):
             torch.cuda.empty_cache()
-        if step == 1 or step % self.demo_every == 0:
+        if step % self.demo_every == 0:
             pl_module.model.eval()
 
             gt = self.test_ds[random.randint(0, len(self.test_ds) - 1)]
@@ -187,7 +232,9 @@ class SegmentFullSongDemoCallback(LT.Callback):
 
                 # log generated segment
                 log_midi_as_audio(
-                    generated_song.to_midi(markers=annotations), "generation", step
+                    generated_song.to_midi(markers=annotations),
+                    "generation",
+                    step,
                 )
                 if use_given_segments:
                     log_midi_as_audio(pr.to_midi(markers=annotations), "gt", step)

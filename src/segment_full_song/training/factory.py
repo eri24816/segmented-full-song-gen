@@ -28,12 +28,14 @@ def create_training_wrapper(model_config, model):
     elif model_config.type == "segment_full_song":
         wrapper = SegmentFullSongTrainingWrapper(
             model,
+            max_tokens=model_config.model.max_tokens,
             pitch_range=model_config.model.pitch_range,
             lr=model_config.training.lr,
             betas=model_config.training.betas,
             eps=model_config.training.eps,
             weight_decay=model_config.training.weight_decay,
             accum_batches=model_config.training.accum_batches,
+            lr_scheduler_gamma=model_config.training.lr_scheduler.gamma,
         )
     elif model_config.type == "vae":
         wrapper = VAETrainingWrapper(

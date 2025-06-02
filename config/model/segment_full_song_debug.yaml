@@ -4,9 +4,9 @@ model:
   max_tokens: 650
   pitch_range: [21, 109]
   max_note_duration: 64
-  dim: 512
-  encoder_num_layers: 4
-  decoder_num_layers: 8
+  dim: 256
+  encoder_num_layers: 1
+  decoder_num_layers: 1
   max_forward_duration: 256
   max_song_duration: 6400
   max_context_duration:
@@ -21,21 +21,21 @@ model:
 
 training:
   seed: 0x517
-  batch_size: 8
+  batch_size: 1
   accum_batches: 1
-  shuffle: true
+  shuffle: false
   drop_last: true
   gradient_clip_val: null
   precision: "16-mixed"
   demo_samples: 1
 
-  lr: 1e-4
+  lr: 0.0001
   betas: [0.9, 0.999]
   eps: 1e-8
   weight_decay: 0
   lr_scheduler:
     gamma: 0.9999953948404178 # 0.01 when 1m steps
 
-  demo_steps: 4000
+  demo_steps: 1000
   checkpoint_steps: 50000
   max_steps: 2000000

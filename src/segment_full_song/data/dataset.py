@@ -145,7 +145,7 @@ class FullSongPianorollDataset(Dataset):
         max_duration: int = 100000000000,
         input_file_format: Literal["pianoroll", "midi"] = "pianoroll",
         transform: Callable[[music_data_analysis.Song], Any] | None = None,
-        split: Literal["train", "test"] = "train",
+        split: Literal["train", "test", "all"] = "all",
         train_set_ratio: float = 0.9,
     ):
         self.ds = music_data_analysis.Dataset(dataset_path)
@@ -179,6 +179,8 @@ class FullSongPianorollDataset(Dataset):
                 for song in self.songs
                 if not is_train_sample(song.song_name, train_set_ratio)
             ]
+        elif split == "all":
+            pass
         else:
             raise ValueError(f"Invalid split: {split}")
 

@@ -1,12 +1,12 @@
 from pathlib import Path
 from omegaconf import OmegaConf
+import safetensors.torch
 import torch
 from segment_full_song.data.dataset import FullSongPianorollDataset
 from segment_full_song.models.factory import create_model
 
 from segment_full_song.models.encoder_decoder import EncoderDecoder
 from segment_full_song.models.token_sequence import TokenSequence
-from segment_full_song.models.utils import load_ckpt_state_dict
 
 import argparse
 import loguru
@@ -20,7 +20,7 @@ def parse_args():
     parser.add_argument("--model_config", type=Path, required=True)
     parser.add_argument("--dataset_config", type=Path, required=True)
     parser.add_argument("--ckpt_path", type=Path, required=True)
-    parser.add_argument("--output_name", type=str, required=True)
+    parser.add_argument("--output_name", type=str, default="latent")
     return parser.parse_args()
 
 
@@ -32,28 +32,35 @@ if __name__ == "__main__":
 
     model: EncoderDecoder = create_model(model_config.model)  # type: ignore
 
-    model.load_state_dict(
-        load_ckpt_state_dict(
-            args.ckpt_path,
-            unwrap_lightning=True,
-        )
-    )
-    ds = FullSongPianorollDataset(Path(dataset_config.path), props=["pianoroll"])
+    model.load_state_dict(safetensors.torch.load_file(args.ckpt_path))
+
+    ds = FullSongPianorollDataset(Path(dataset_config.path))
+
     model.eval().cuda()
 
     output_dir = Path(dataset_config.path) / args.output_name
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     loguru.logger.info(f"Encoding {len(ds)} songs")
 
-    max_batch_size = 5000
+    max_batch_size = 300
     for song in tqdm(ds, desc="Encoding"):
-        pr = song["pianoroll"]
+        pr = song.read_pianoroll("pianoroll")
+        duration = song.read_json("duration")
+        if pr.duration == int(duration / 64 * pr.frames_per_beat):
+            # print("skip")
+            continue
+        pr.duration = int(duration / 64 * pr.frames_per_beat)
         bars = list(pr.iter_over_bars_pr())
 
         result_batches = []
         for i in range(0, len(bars), max_batch_size):
             batch = bars[i : i + max_batch_size]
-            repr = TokenSequence.from_pianorolls(batch, device=torch.device("cuda"))
+            repr = TokenSequence.from_pianorolls(
+                batch,
+                device=torch.device("cuda"),
+                max_note_duration=model_config.model.max_note_duration,
+            )
             with torch.no_grad():
                 latent = model.encode(repr)
             result_batches.append(latent)

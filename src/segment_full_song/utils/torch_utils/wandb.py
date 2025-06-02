@@ -80,7 +80,7 @@ def log_pianoroll(
         pianoroll = [pianoroll]
     pianorolls_to_img(pianoroll, img_path, annotations=annotations)
     image = wandb.Image(str(img_path))
-    wandb.log({name: image}, step=step)
+    wandb.log({name: image})
     return image
 
 def log_midi_as_audio(
@@ -110,5 +110,5 @@ def log_midi_as_audio(
     # delete the wav file
     wav_path.unlink()
     audio = wandb.Audio(str(mp3_path), caption=f"{name} {step}")
-    wandb.log({name: audio}, step=step)
+    wandb.log({name: audio})
     return audio

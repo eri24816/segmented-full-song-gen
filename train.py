@@ -1,15 +1,18 @@
 import argparse
 import multiprocessing
 from pathlib import Path
+from typing import cast
 
 import lightning as LT
 from lightning.pytorch.callbacks import ModelCheckpoint
 from loguru import logger
 
+from safetensors.torch import load_file
 import wandb
 from segment_full_song.data.factory import create_dataloader
 from segment_full_song.env import PROJECT_NAME
 from segment_full_song.models.factory import create_model
+from segment_full_song.models.segment_full_song import SegmentFullSongModel
 from segment_full_song.training.factory import (
     create_demo_callback,
     create_training_wrapper,
@@ -25,13 +28,11 @@ from segment_full_song.training.utils import (
 
 def parse_args():
     parser = argparse.ArgumentParser()
-
+    parser.add_argument("--name", type=str, default=PROJECT_NAME)
+    parser.add_argument("--wandb_group", "-g", type=str, default=None)
     parser.add_argument("--model_config", type=Path, required=True)
     parser.add_argument("--dataset_config", type=Path, required=True)
     parser.add_argument("--save_dir", type=Path, required=True)
-
-    parser.add_argument("--name", type=str, default=PROJECT_NAME)
-    parser.add_argument("--wandb_group", "-g", type=str, default=None)
 
     parser.add_argument(
         "--num_workers", type=int, default=multiprocessing.cpu_count() // 2
@@ -42,10 +43,12 @@ def parse_args():
     parser.add_argument("--pin_memory", type=bool, default=True)
     parser.add_argument("--persistent_workers", type=bool, default=None)
 
-    parser.add_argument("--pretrained_ckpt_path", type=Path, default=None)
     parser.add_argument("--ckpt_path", type=Path, default=None)
     parser.add_argument("--test", action="store_true")
     parser.add_argument("--profile", "-p", action="store_true")
+
+    # used when training segment_full_song model
+    parser.add_argument("--bar_embedder_ckpt_path", type=Path, default=None)
 
     return parser.parse_args()
 
@@ -54,6 +57,14 @@ def main(args):
     model_config, dataset_config, dataloader_config = init_env(args)
 
     model = create_model(model_config.model)
+
+    if model_config.model.type == "segment_full_song":
+        assert args.bar_embedder_ckpt_path is not None, (
+            "Training segment_full_song model requires --bar_embedder_ckpt_path"
+        )
+        cast(SegmentFullSongModel, model).bar_embedder.load_state_dict(
+            load_file(args.bar_embedder_ckpt_path)
+        )
 
     train_dl, test_ds = create_dataloader(
         dataset_config,

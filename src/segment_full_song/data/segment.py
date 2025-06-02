@@ -29,9 +29,10 @@ def get_compose_order(segments: list[dict]):
 
     # print("n_bars_per_label", n_bars_per_label)
 
-    label = np.argmax(n_bars_per_label)
-    # print("label", label)
+    label_sorted_by_n_bars = np.argsort(n_bars_per_label)
 
+    # The composer writes a segment with the most common label first.
+    label = label_sorted_by_n_bars[-1]
     selected_segment = None
     for segment in segments:
         if segment["label"] == label:
@@ -41,15 +42,11 @@ def get_compose_order(segments: list[dict]):
                 selected_segment["start"] - duration // 2
             ):
                 selected_segment = segment
-
     segment_compose_order.append(selected_segment)
 
-    # Next, the composer writes the second-most bars segment.
-
+    # Next, the composer writes a segment with the second most common label.
     if len(n_bars_per_label) > 2:
-        label = np.argsort(n_bars_per_label)[-2]
-        # print("label", label)
-
+        label = label_sorted_by_n_bars[-2]
         selected_segment = None
         for segment in segments:
             if segment["label"] == label:
@@ -59,10 +56,7 @@ def get_compose_order(segments: list[dict]):
                     selected_segment["start"] - duration // 2
                 ):
                     selected_segment = segment
-
         segment_compose_order.append(selected_segment)
-
-    # print("segment_compose_order", segment_compose_order)
 
     # randomly permute the remaining segments
     remaining_segments = [
@@ -81,6 +75,7 @@ def create_testing_dataset(
     path: Path,
     max_duration: int = 100000000000,
     min_duration: int = 0,
+    train_set_ratio: float = 0.9,
 ):
     def transform(song: music_data_analysis.Song):
         segments_info = song.read_json("segmentation")
@@ -100,6 +95,7 @@ def create_testing_dataset(
         transform=transform,
         max_duration=max_duration,
         split="test",
+        train_set_ratio=train_set_ratio,
         min_duration=min_duration,
     )
     return ds
@@ -233,7 +229,6 @@ def transform(
     max_note_duration: int,
     max_context_duration: dict[str, int],
     max_tokens: int | None = None,
-    max_tokens_rate: float | None = None,
 ) -> dict:
     segments_info = song.read_json("segmentation")
     sampled_song_segments, segment_compose_order = sample_training_segments(
@@ -252,7 +247,6 @@ def transform(
                 need_end_token=k == "target",
                 need_frame_tokens=k == "target",
                 max_tokens=max_tokens,
-                max_tokens_rate=max_tokens_rate,
                 max_note_duration=max_note_duration,
             ),
             "shift_from_song_start": segment["start"],  # absolute position in song
@@ -289,6 +283,9 @@ def transform(
     # the multiplication here is not necessary. It just makes the code clear that masked embeddings are not used in training.
     result["bar_embeddings"] = bar_embeddings * bar_embeddings_mask.unsqueeze(1).float()
     result["bar_embeddings_mask"] = bar_embeddings_mask
+
+    # check
+
     return result
 
 
@@ -300,14 +297,12 @@ def create_training_dataset(
     max_duration: int = 100000000000,
     min_duration: int = 0,
     max_tokens: int | None = None,
-    max_tokens_rate: float | None = None,
     train_set_ratio: float = 0.9,
 ):
     _transform = partial(
         transform,
         bar_embedding_prop=bar_embedding_prop,
         max_tokens=max_tokens,
-        max_tokens_rate=max_tokens_rate,
         max_context_duration=max_context_duration,
         max_note_duration=max_note_duration,
     )
@@ -320,33 +315,3 @@ def create_training_dataset(
         train_set_ratio=train_set_ratio,
     )
     return ds
-
-
-if __name__ == "__main__":
-    # from segment_full_song.data.factory import pr_dataset_collate_fn
-
-    # ds = create_training_dataset(
-    #     Path("link/dataset/pop80k_k"),
-    #     max_context_duration={"target": 256, "left": 256, "right": 256, "seed": 256, "reference": 256},
-    # )
-    # pprint(pr_dataset_collate_fn([ds[5], ds[456]]))
-
-    # plot histogram of tokens length
-    import numpy as np
-
-    # Load the dataset
-    ds = create_training_dataset(
-        Path("link/dataset/pop80k_k"),
-        max_context_duration={
-            "target": 256,
-            "left": 256,
-            "right": 256,
-            "seed": 256,
-            "reference": 256,
-        },
-        bar_embedding_prop="latent_i41ffa2m_1m",
-    )
-    for i in range(1):
-        i = 20502  # random.randint(0, len(ds))
-        print(i)
-        print(ds[i])

@@ -99,9 +99,11 @@ def create_dataloader(dataset_config, dataloader_config, model_config):
             max_context_duration=model_config.model.max_context_duration,
             min_duration=dataset_config.min_duration,
             max_duration=dataset_config.max_duration,
-            max_tokens=model_config.model.max_tokens,
             max_note_duration=model_config.model.max_note_duration,
             bar_embedding_prop=dataset_config.bar_embedding_prop,
+            train_set_ratio=0.9,
+            # we don't pass max_tokens here, because we skip the training step if sequence too long instead of truncating.
+            # the dataset will output full length sequence.
         )
 
         train_loader = torch.utils.data.DataLoader(
@@ -114,6 +116,7 @@ def create_dataloader(dataset_config, dataloader_config, model_config):
             Path(dataset_config.path),
             min_duration=dataset_config.min_duration,
             max_duration=dataset_config.max_duration,
+            train_set_ratio=0.9,
         )
 
         return train_loader, test_dataset

@@ -8,7 +8,15 @@ from segment_full_song.models.factory import create_model
 from segment_full_song.training.factory import create_training_wrapper
 
 
-def export_model(ckpt_path: Path, save_dir: Path, prefix: str):
+def unwrap_lightning_module(
+    ckpt_path: Path, save_dir: Path | None = None, prefix: str | None = None
+):
+    os.environ["TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD"] = "1"
+    if save_dir is None:
+        save_dir = ckpt_path.parent
+    if prefix is None:
+        prefix = ckpt_path.stem
+
     ckpt = torch.load(ckpt_path, map_location="cpu")
     model_config = ckpt["model_config"]
 
@@ -19,8 +27,6 @@ def export_model(ckpt_path: Path, save_dir: Path, prefix: str):
 
 
 if __name__ == "__main__":
-    # TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1
-    os.environ["TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD"] = "1"
     parser = argparse.ArgumentParser(
         description="Export Lightning model to Torch model"
     )
@@ -31,6 +37,6 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    export_model(
+    unwrap_lightning_module(
         args.ckpt_path, save_dir=args.ckpt_path.parent, prefix=args.ckpt_path.stem
     )
