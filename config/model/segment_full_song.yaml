@@ -3,7 +3,7 @@ model:
   type: segment_full_song
   max_tokens: 950
   pitch_range: [21, 109]
-  max_note_duration: 64
+  max_note_duration: 63
   dim: 512
   encoder_num_layers: 4
   decoder_num_layers: 8

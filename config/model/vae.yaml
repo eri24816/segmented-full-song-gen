@@ -5,7 +5,7 @@ model:
   test_duration: 256
   max_tokens: 160
   pitch_range: [21, 109]
-  max_note_duration: 64
+  max_note_duration: 63
   encoder:
     dim: 512
     num_layers: 5
