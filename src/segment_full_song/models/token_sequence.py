@@ -64,8 +64,10 @@ def tokenize(
 
             # calculate duration
             has_successor = note in notes_with_successor
-            offset_at_bar_end = cast(int, note.offset) % pr.frames_per_bar == 0
-            if has_successor or offset_at_bar_end:
+            offset_at_current_bar_end = (
+                cast(int, note.offset) % pr.frames_per_bar == 0
+            ) and (cast(int, note.offset) - note.onset <= pr.frames_per_bar)
+            if has_successor or offset_at_current_bar_end:
                 # 0 is a special class for "to be determined with onset of the next note with same pitch"
                 duration = 0
             else:
@@ -581,12 +583,18 @@ if __name__ == "__main__":
             Note(onset=3, pitch=62, velocity=100, offset=5),
             Note(onset=6, pitch=60, velocity=100, offset=7),
             Note(onset=6, pitch=62, velocity=100, offset=8),
-            Note(onset=31, pitch=60, velocity=100, offset=32),
-            Note(onset=31, pitch=50, velocity=100, offset=32),
-            Note(onset=33, pitch=50, velocity=100, offset=50),
+            Note(onset=31, pitch=60, velocity=100, offset=64),
+            Note(onset=31, pitch=50, velocity=100, offset=33),
+            Note(onset=33, pitch=50, velocity=100, offset=64),
         ],
         duration=64,
     )
+    pr1.to_midi("test.midi")
+
+    TokenSequence.from_pianorolls(
+        [pr1], max_note_duration=64, need_frame_tokens=True
+    ).to_pianoroll().to_midi("test2.midi")
+
     print(
         TokenSequence.from_pianorolls(
             [pr1], max_note_duration=64, need_frame_tokens=False
