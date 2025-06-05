@@ -27,7 +27,7 @@ class SegmentFullSongTrainingWrapper(LT.LightningModule):
         weight_decay: float = 0,
         lr_scheduler_gamma: float = 1,
         accum_batches: int = 1,
-        continue_on_exception: bool = False,
+        continue_on_oom: bool = True,
     ):
         super().__init__()
         self.model = model
@@ -43,7 +43,7 @@ class SegmentFullSongTrainingWrapper(LT.LightningModule):
         self.actual_step = -1  # lightning fails to calculate right global_step for automatic_optimization = False
         self.accum_batches = accum_batches
         self.max_tokens = max_tokens
-        self.continue_on_exception = continue_on_exception
+        self.continue_on_oom = continue_on_oom
 
     def forward(self, **kwargs):
         return self.model(**kwargs)
@@ -101,17 +101,12 @@ class SegmentFullSongTrainingWrapper(LT.LightningModule):
                 bar_embeddings_mask=batch["bar_embeddings_mask"],
             )
         except Exception as e:
-            if not self.continue_on_exception:
-                raise e
-            if isinstance(e, torch.cuda.OutOfMemoryError):
+            if isinstance(e, torch.cuda.OutOfMemoryError) and self.continue_on_oom:
                 torch.cuda.empty_cache()
                 loguru.logger.warning("Out of memory. Skipping this batch.")
                 return None
             else:
-                loguru.logger.error(traceback.format_exc())
-                return None
-
-
+                raise e
         opt = cast(torch.optim.Optimizer, self.optimizers())
 
         try:

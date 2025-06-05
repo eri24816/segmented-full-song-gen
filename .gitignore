@@ -5,7 +5,7 @@
 /lightning_logs/
 /ckpt/
 /out/
-
+/dataset/
 /ignore/
 /notebook/data/
 
