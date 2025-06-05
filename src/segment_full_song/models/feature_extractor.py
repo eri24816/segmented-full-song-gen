@@ -75,7 +75,7 @@ class FeatureExtractor(nn.Module):
         self.frame_emb = nn.Embedding(1, dim)
         self.pitch_emb = nn.Embedding(self.num_pitch, dim)
         self.velocity_emb = nn.Embedding(128, dim)
-        self.duration_emb = nn.Embedding(max_note_duration, dim)
+        self.duration_emb = nn.Embedding(max_note_duration + 1, dim)
         self.use_start_end_pos = use_start_end_pos
         self.max_note_duration = max_note_duration
 

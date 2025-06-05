@@ -180,7 +180,7 @@ class SegmentFullSongModel(nn.Module):
         self.out_pitch_emb = nn.Embedding(self.num_pitch, dim)
         self.velocity_classifier = MLP(dim, 256, 128, 0)
         self.out_velocity_emb = nn.Embedding(128, dim)
-        self.duration_classifier = MLP(dim, 256, max_note_duration, 0)
+        self.duration_classifier = MLP(dim, 256, max_note_duration + 1, 0)
 
         self.masked_bar_embedding = nn.Parameter(torch.randn(1, 1, latent_dim))
 
