@@ -18,7 +18,7 @@ from segment_full_song.models.token_sequence import TokenSequence
 # )
 pr1 = Pianoroll.from_midi(
     Path(
-        "/mnt/gestalt/home/eri24816/segment-full-song-gen/dataset/pop80k_k/synced_midi/@Animenzzz/-liXLunc-JQ/0_365.mid"
+        "dataset/pop80k_k/synced_midi/@SangeoMusic/0Zo2uPKfzvg/3438_3730.mid"
     )
 )
 pr1.to_midi("test.midi")

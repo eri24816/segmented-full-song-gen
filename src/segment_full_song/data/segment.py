@@ -80,7 +80,13 @@ def create_testing_dataset(
     def transform(song: music_data_analysis.Song):
         segments_info = song.read_json("segmentation")
         segment_compose_order = get_compose_order(segments_info)
-        pr = song.read_pianoroll("pianoroll")
+        # pr = song.read_pianoroll("pianoroll")
+        pr = music_data_analysis.Pianoroll.from_midi(
+            song.read_midi("synced_midi"),
+            name=song.song_name,
+            beats_per_bar=4,
+            frames_per_beat=8,
+        )
         pr.duration = int(
             song.read_json("duration") / 64 * pr.frames_per_beat
         )  # due to analysis code bug, pr.duration sometimes is not the same as song_duration
@@ -192,12 +198,26 @@ def sample_training_segments(
             continue
         elif full_seg["end"] - full_seg["start"] > max_context_duration[k]:
             if k == "target":
-                shift = random.randint(
-                    0, full_seg["end"] - full_seg["start"] - max_context_duration[k] - 1
+                shift = (
+                    random.randint(
+                        0,
+                        (
+                            (
+                                full_seg["end"]
+                                - full_seg["start"]
+                                - max_context_duration[k]
+                            )
+                            // 32
+                        ),
+                    )
+                    * 32
                 )
-                shift = shift - (shift % 32)  # quantize to bar
                 start = full_seg["start"] + shift
                 end = start + max_context_duration[k]
+                assert start >= full_seg["start"]
+                assert end <= full_seg["end"]
+                assert end - start == max_context_duration[k]
+
             elif k == "left":
                 # right most
                 start = full_seg["end"] - max_context_duration[k]
@@ -237,7 +257,13 @@ def transform(
     result = {}
     song_duration = int(song.read_json("duration") / 64 * 8)
     for k, segment in sampled_song_segments.items():
-        pr = song.read_pianoroll("pianoroll")
+        # pr = song.read_pianoroll("pianoroll")
+        pr = music_data_analysis.Pianoroll.from_midi(
+            song.read_midi("synced_midi"),
+            name=song.song_name,
+            beats_per_bar=4,
+            frames_per_beat=8,
+        )
         pr.duration = song_duration  # due to analysis code bug, pr.duration sometimes is not the same as song_duration
         pr = pr.slice(segment["start"], segment["end"])
         result[k] = {
