@@ -16,7 +16,26 @@ model:
     target: 256
   latent_dim: 256
   frames_per_bar: 32
-  bar_embedder_config_path: config/model/vae.yaml
+  bar_embedder:
+    type: vae
+    duration: 32
+    test_duration: 256
+    max_tokens: 160
+    pitch_range: [21, 109]
+    max_note_duration: 64
+    encoder:
+      dim: 512
+      num_layers: 5
+    decoder:
+      dim: 512
+      num_layers: 5
+    bottleneck:
+      type: "vae"
+      vae_params:
+        beta: 0.1
+        latent_dim: 256
+        beta_cycle_steps: 50000
+        beta_start_step: 1000
 
 training:
   seed: 0x517
