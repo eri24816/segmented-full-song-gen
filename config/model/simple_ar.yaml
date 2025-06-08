@@ -1,4 +1,3 @@
-type: simple_ar
 model:
   type: simple_ar
   duration: 256

@@ -32,7 +32,7 @@ def parse_args():
     parser.add_argument("--wandb_group", "-g", type=str, default=None)
     parser.add_argument("--model_config", type=Path, required=True)
     parser.add_argument("--dataset_config", type=Path, required=True)
-    parser.add_argument("--save_dir", type=Path, required=True)
+    parser.add_argument("--save_dir", type=Path, default='.')
 
     parser.add_argument(
         "--num_workers", type=int, default=multiprocessing.cpu_count() // 2
