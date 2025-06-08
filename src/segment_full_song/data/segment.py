@@ -116,15 +116,13 @@ class SampleTrainingSegmentsResultItem(TypedDict):
 
 
 def get_context_for_target_segment(
-    segments: list[dict],
+    existing_segments: list[dict],
     target_segment: dict,
 ) -> dict[str, SampleTrainingSegmentsResultItem]:
-    target_index = segments.index(target_segment)
-    already_composed_segments = segments[:target_index]
 
     nearest_left_segment = None
     nearest_left_segment_distance = float("inf")
-    for segment in reversed(already_composed_segments):
+    for segment in reversed(existing_segments):
         if segment["end"] > target_segment["start"]:
             continue
         left_segment_distance = target_segment["start"] - segment["end"]
@@ -134,7 +132,7 @@ def get_context_for_target_segment(
 
     nearest_right_segment = None
     nearest_right_segment_distance = float("inf")
-    for segment in already_composed_segments:
+    for segment in existing_segments:
         if segment["start"] < target_segment["end"]:
             continue
         right_segment_distance = segment["start"] - target_segment["end"]
@@ -143,15 +141,15 @@ def get_context_for_target_segment(
             nearest_right_segment = segment
 
     reference_segment = None
-    for segment in already_composed_segments:
+    for segment in existing_segments:
         if segment["label"] == target_segment["label"]:
             reference_segment = segment
             break
 
-    if target_index == 0:
+    if len(existing_segments) == 0:
         seed_segment = None
     else:
-        seed_segment = segments[0]
+        seed_segment = existing_segments[0]
 
     # print("target_index", target_index)
     # print("left_segment", nearest_left_segment)
@@ -180,9 +178,10 @@ def sample_training_segments(
 
     target_index = random.randint(0, len(segment_compose_order) - 1)
     target_segment = segment_compose_order[target_index]
+    existing_segments = segments[:target_index]
 
     selected_segments = get_context_for_target_segment(
-        segment_compose_order, target_segment
+        existing_segments, target_segment
     )
 
     result: dict[str, SampleTrainingSegmentsResultItem] = {}
