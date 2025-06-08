@@ -17,8 +17,8 @@ from tqdm import tqdm
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model_config", type=Path, required=True)
-    parser.add_argument("--dataset_config", type=Path, required=True)
+    parser.add_argument("model_config", type=Path)
+    parser.add_argument("dataset_config", type=Path)
     parser.add_argument("--ckpt_path", type=Path, required=True)
     parser.add_argument("--output_name", type=str, default="latent")
     return parser.parse_args()

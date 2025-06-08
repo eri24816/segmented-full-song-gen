@@ -28,10 +28,10 @@ from segment_full_song.training.utils import (
 
 def parse_args():
     parser = argparse.ArgumentParser()
+    parser.add_argument("model_config", type=Path)
+    parser.add_argument("dataset_config", type=Path)
     parser.add_argument("--name", type=str, default=PROJECT_NAME)
     parser.add_argument("--wandb_group", "-g", type=str, default=None)
-    parser.add_argument("--model_config", type=Path, required=True)
-    parser.add_argument("--dataset_config", type=Path, required=True)
     parser.add_argument("--save_dir", type=Path, default='.')
 
     parser.add_argument(
