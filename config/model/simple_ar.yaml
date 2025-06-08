@@ -6,7 +6,7 @@ model:
   pitch_range: [21, 109]
   dim: 512
   num_layers: 8
-  max_note_duration: 63
+  max_note_duration: 64
 training:
   seed: 0x517
   batch_size: 16

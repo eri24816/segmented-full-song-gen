@@ -176,7 +176,7 @@ class SegmentFullSongDemoCallback(LT.Callback):
             >= torch.cuda.get_device_properties(0).total_memory * 0.95
         ):
             torch.cuda.empty_cache()
-        if step % self.demo_every == 0:
+        if step % self.demo_every == 0 and step > 0:
             pl_module.model.eval()
 
             gt = self.test_ds[random.randint(0, len(self.test_ds) - 1)]

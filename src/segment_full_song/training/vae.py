@@ -113,7 +113,7 @@ class VAEDemoCallback(LT.Callback):
             torch.cuda.empty_cache()
         min_pitch = pl_module.model.pitch_range[0]
         pl_module.model.eval()
-        if pl_module.global_step == 1 or pl_module.global_step % self.demo_every == 0:
+        if pl_module.global_step % self.demo_every == 0:
             pl_module.model.eval()
 
             assert isinstance(self.test_ds, Sized)

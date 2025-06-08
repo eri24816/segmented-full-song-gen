@@ -91,7 +91,7 @@ class SimpleARDemoCallback(LT.Callback):
             >= torch.cuda.get_device_properties(0).total_memory * 0.95
         ):
             torch.cuda.empty_cache()
-        if pl_module.global_step == 1 or pl_module.global_step % self.demo_every == 0:
+        if pl_module.global_step % self.demo_every == 0:
             pl_module.model.eval()
 
             min_pitch = pl_module.model.pitch_range[0]
