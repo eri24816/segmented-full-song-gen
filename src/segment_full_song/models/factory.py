@@ -29,13 +29,13 @@ def create_model(config):
         return model
 
     elif config.type == "segment_full_song":
-        encoder_decoder = cast(
+        bar_embedder = cast(
             EncoderDecoder,
-            create_model(OmegaConf.load(config.bar_embedder_config_path).model),
+            create_model(config.bar_embedder),
         )
 
         model = SegmentFullSongModel(
-            bar_embedder=encoder_decoder,
+            bar_embedder=bar_embedder,
             dim=config.dim,
             pitch_range=config.pitch_range,
             max_note_duration=config.max_note_duration,

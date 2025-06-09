@@ -80,7 +80,13 @@ def create_testing_dataset(
     def transform(song: music_data_analysis.Song):
         segments_info = song.read_json("segmentation")
         segment_compose_order = get_compose_order(segments_info)
-        pr = song.read_pianoroll("pianoroll")
+        # pr = song.read_pianoroll("pianoroll")
+        pr = music_data_analysis.Pianoroll.from_midi(
+            song.read_midi("synced_midi"),
+            name=song.song_name,
+            beats_per_bar=4,
+            frames_per_beat=8,
+        )
         pr.duration = int(
             song.read_json("duration") / 64 * pr.frames_per_beat
         )  # due to analysis code bug, pr.duration sometimes is not the same as song_duration
@@ -110,15 +116,13 @@ class SampleTrainingSegmentsResultItem(TypedDict):
 
 
 def get_context_for_target_segment(
-    segments: list[dict],
+    existing_segments: list[dict],
     target_segment: dict,
 ) -> dict[str, SampleTrainingSegmentsResultItem]:
-    target_index = segments.index(target_segment)
-    already_composed_segments = segments[:target_index]
 
     nearest_left_segment = None
     nearest_left_segment_distance = float("inf")
-    for segment in reversed(already_composed_segments):
+    for segment in reversed(existing_segments):
         if segment["end"] > target_segment["start"]:
             continue
         left_segment_distance = target_segment["start"] - segment["end"]
@@ -128,7 +132,7 @@ def get_context_for_target_segment(
 
     nearest_right_segment = None
     nearest_right_segment_distance = float("inf")
-    for segment in already_composed_segments:
+    for segment in existing_segments:
         if segment["start"] < target_segment["end"]:
             continue
         right_segment_distance = segment["start"] - target_segment["end"]
@@ -137,15 +141,15 @@ def get_context_for_target_segment(
             nearest_right_segment = segment
 
     reference_segment = None
-    for segment in already_composed_segments:
+    for segment in existing_segments:
         if segment["label"] == target_segment["label"]:
             reference_segment = segment
             break
 
-    if target_index == 0:
+    if len(existing_segments) == 0:
         seed_segment = None
     else:
-        seed_segment = segments[0]
+        seed_segment = existing_segments[0]
 
     # print("target_index", target_index)
     # print("left_segment", nearest_left_segment)
@@ -174,9 +178,10 @@ def sample_training_segments(
 
     target_index = random.randint(0, len(segment_compose_order) - 1)
     target_segment = segment_compose_order[target_index]
+    existing_segments = segments[:target_index]
 
     selected_segments = get_context_for_target_segment(
-        segment_compose_order, target_segment
+        existing_segments, target_segment
     )
 
     result: dict[str, SampleTrainingSegmentsResultItem] = {}
@@ -192,12 +197,26 @@ def sample_training_segments(
             continue
         elif full_seg["end"] - full_seg["start"] > max_context_duration[k]:
             if k == "target":
-                shift = random.randint(
-                    0, full_seg["end"] - full_seg["start"] - max_context_duration[k] - 1
+                shift = (
+                    random.randint(
+                        0,
+                        (
+                            (
+                                full_seg["end"]
+                                - full_seg["start"]
+                                - max_context_duration[k]
+                            )
+                            // 32
+                        ),
+                    )
+                    * 32
                 )
-                shift = shift - (shift % 32)  # quantize to bar
                 start = full_seg["start"] + shift
                 end = start + max_context_duration[k]
+                assert start >= full_seg["start"]
+                assert end <= full_seg["end"]
+                assert end - start == max_context_duration[k]
+
             elif k == "left":
                 # right most
                 start = full_seg["end"] - max_context_duration[k]
@@ -237,7 +256,13 @@ def transform(
     result = {}
     song_duration = int(song.read_json("duration") / 64 * 8)
     for k, segment in sampled_song_segments.items():
-        pr = song.read_pianoroll("pianoroll")
+        # pr = song.read_pianoroll("pianoroll")
+        pr = music_data_analysis.Pianoroll.from_midi(
+            song.read_midi("synced_midi"),
+            name=song.song_name,
+            beats_per_bar=4,
+            frames_per_beat=8,
+        )
         pr.duration = song_duration  # due to analysis code bug, pr.duration sometimes is not the same as song_duration
         pr = pr.slice(segment["start"], segment["end"])
         result[k] = {

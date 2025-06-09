@@ -33,9 +33,9 @@ def main_simple_ar(args):
 
 def parse_args():
     parser = argparse.ArgumentParser()
+    parser.add_argument("model_config", type=Path, required=True)
+    parser.add_argument("dataset_config", type=Path, required=True)
     parser.add_argument("--pretrained_ckpt_path", type=Path, required=True)
-    parser.add_argument("--model_config", type=Path, required=True)
-    parser.add_argument("--dataset_config", type=Path, required=True)
     parser.add_argument("--task", type=str)
     parser.add_argument("--test", action="store_true")
     parser.add_argument("--seed", type=int, default=0)

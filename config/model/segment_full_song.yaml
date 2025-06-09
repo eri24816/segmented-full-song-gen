@@ -1,7 +1,6 @@
-type: segment_full_song
 model:
   type: segment_full_song
-  max_tokens: 650
+  max_tokens: 950
   pitch_range: [21, 109]
   max_note_duration: 64
   dim: 512
@@ -17,11 +16,30 @@ model:
     target: 256
   latent_dim: 256
   frames_per_bar: 32
-  bar_embedder_config_path: config/model/vae.yaml
+  bar_embedder:
+    type: vae
+    duration: 32
+    test_duration: 256
+    max_tokens: 160
+    pitch_range: [21, 109]
+    max_note_duration: 64
+    encoder:
+      dim: 512
+      num_layers: 5
+    decoder:
+      dim: 512
+      num_layers: 5
+    bottleneck:
+      type: "vae"
+      vae_params:
+        beta: 0.1
+        latent_dim: 256
+        beta_cycle_steps: 50000
+        beta_start_step: 1000
 
 training:
   seed: 0x517
-  batch_size: 8
+  batch_size: 12
   accum_batches: 1
   shuffle: true
   drop_last: true
@@ -34,7 +52,7 @@ training:
   eps: 1e-8
   weight_decay: 0
   lr_scheduler:
-    gamma: 0.9999953948404178 # 0.01 when 1m steps
+    gamma: 0.999998502134985 # 0.05 at 2m steps
 
   demo_steps: 4000
   checkpoint_steps: 50000

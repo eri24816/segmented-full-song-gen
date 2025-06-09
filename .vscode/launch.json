@@ -2,6 +2,28 @@
     "version": "0.1.0",
     "configurations": [
         {
+            "name": "Python: Train segment full song",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "train.py",
+            "args": [
+                "--model_config",
+                "config/model/segment_full_song_debug.yaml",
+                "--dataset_config",
+                "config/dataset/segment_full_song_debug.yaml",
+                "--save_dir",
+                ".",
+                "-g",
+                "segment_full_song",
+                "--num_workers",
+                "0",
+                "--bar_embedder_ckpt_path",
+                "wandb/run-20250601_205248-blpkxl0m/files/checkpoints/epoch=2-step=400000.safetensors"
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
             "name": "Python: Train latent diff",
             "type": "debugpy",
             "request": "launch",

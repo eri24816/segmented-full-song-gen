@@ -39,6 +39,10 @@ class SegmentIndexer:
 
 
 def is_train_sample(song_name: str, train_set_ratio: float):
+    if song_name.startswith("debug_train"):
+        return True
+    if song_name.startswith("debug_test"):
+        return False
     # Hash the string to a hex digest
     hash_digest = hashlib.md5(song_name.encode("utf-8")).hexdigest()
     # Convert the hex digest to an integer
@@ -148,7 +152,9 @@ class FullSongPianorollDataset(Dataset):
         split: Literal["train", "test", "all"] = "all",
         train_set_ratio: float = 0.9,
     ):
-        self.ds = music_data_analysis.Dataset(dataset_path)
+        self.ds = music_data_analysis.Dataset(
+            dataset_path, song_search_index="synced_midi"
+        )
         self.frames_per_beat = frames_per_beat
         self.min_duration = min_duration
         self.max_duration = max_duration
@@ -164,7 +170,7 @@ class FullSongPianorollDataset(Dataset):
             if song.read_json("duration") * self.frames_per_beat // 64
             < self.max_duration
             and song.read_json("duration") * self.frames_per_beat // 64
-            > self.min_duration
+            >= self.min_duration
         ]
 
         if split == "train":

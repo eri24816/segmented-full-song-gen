@@ -77,7 +77,7 @@ def setup_wandb(args, training_wrapper, model_config, dataset_config):
     wandb_logger = WandbLogger(
         project=args.name,
         name=experiment_name,
-        group=args.wandb_group,
+        group=args.wandb_group if args.wandb_group else model_config.model.type,
         save_dir=args.save_dir,
     )
     wandb_logger.watch(training_wrapper)
