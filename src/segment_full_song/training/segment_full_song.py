@@ -176,12 +176,10 @@ class SegmentFullSongDemoCallback(LT.Callback):
             >= torch.cuda.get_device_properties(0).total_memory * 0.95
         ):
             torch.cuda.empty_cache()
-        if step % self.demo_every == 0 and step > 0:
+        if step % self.demo_every == 0:
             pl_module.model.eval()
 
             gt = self.test_ds[random.randint(0, len(self.test_ds) - 1)]
-
-            segment_info_list = gt["segments"]
 
             segment_info_list = gt["segments"]
 
@@ -240,6 +238,7 @@ class SegmentFullSongDemoCallback(LT.Callback):
                         step,
                         annotations=annotations,
                         format="png",
+                        save_dir=Path("pianoroll"),
                     )
                 else:
                     log_pianoroll(
@@ -248,6 +247,7 @@ class SegmentFullSongDemoCallback(LT.Callback):
                         step,
                         annotations=annotations,
                         format="png",
+                        save_dir=Path("pianoroll"),
                     )
 
             except Exception:

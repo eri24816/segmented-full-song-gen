@@ -47,9 +47,7 @@ if __name__ == "__main__":
     for song in tqdm(ds, desc="Encoding"):
         pr = song.read_pianoroll("pianoroll")
         duration = song.read_json("duration")
-        if pr.duration == int(duration / 64 * pr.frames_per_beat):
-            # print("skip")
-            continue
+
         pr.duration = int(duration / 64 * pr.frames_per_beat)
         bars = list(pr.iter_over_bars_pr())
 

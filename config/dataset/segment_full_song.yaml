@@ -2,4 +2,4 @@ name: segment_full_song
 path: dataset/pop80k_k
 min_duration: 128
 max_duration: 6400
-bar_embedding_prop: latent_blpkxl0m
+bar_embedding_prop: latent_snqedhos

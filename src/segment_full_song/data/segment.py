@@ -178,7 +178,7 @@ def sample_training_segments(
 
     target_index = random.randint(0, len(segment_compose_order) - 1)
     target_segment = segment_compose_order[target_index]
-    existing_segments = segments[:target_index]
+    existing_segments = segment_compose_order[:target_index]
 
     selected_segments = get_context_for_target_segment(
         existing_segments, target_segment
