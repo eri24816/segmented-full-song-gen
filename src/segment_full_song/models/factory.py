@@ -15,6 +15,9 @@ from segment_full_song.models.segment_full_song import SegmentFullSongModel
 
 
 def create_model(config):
+    if isinstance(config, str):
+        config = OmegaConf.load(config)
+
     if config.type == "simple_ar":
         model = TokenGenerator(
             dim=config.dim,
