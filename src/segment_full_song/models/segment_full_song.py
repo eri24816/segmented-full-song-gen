@@ -1,10 +1,9 @@
 from dataclasses import dataclass
-from typing import Generic, Sequence, TypeVar, TypedDict, cast
+from typing import Sequence, TypeVar, TypedDict, cast
 import miditoolkit
 from music_data_analysis import Pianoroll
 import torch
 import torch.nn as nn
-from loguru import logger
 from torch import Tensor
 from tqdm import tqdm
 
@@ -20,6 +19,8 @@ from segment_full_song.models.token_sequence import TokenSequence
 import x_transformers
 
 from segment_full_song.utils.torch_utils.shape_guard import shape_guard
+from loguru import logger
+from typing import Callable
 
 DEBUG = True
 
@@ -237,7 +238,6 @@ class SegmentFullSongModel(nn.Module):
         bar_embeddings_mask="b bar",
         shift_from_song_start="b",
         song_duration="b",
-        pos="b n",
         _output="b n self.dim",
     )
     def encode_bar_embeddings(
@@ -246,7 +246,7 @@ class SegmentFullSongModel(nn.Module):
         bar_embeddings_mask: torch.Tensor,
         shift_from_song_start: torch.Tensor,
         song_duration: torch.Tensor,
-        pos: torch.Tensor,
+        pos: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """
         bar_embeddings: (batch_size, num_bars, dim)
@@ -264,6 +264,9 @@ class SegmentFullSongModel(nn.Module):
         global_feature = self.global_vision(
             bar_embeddings, duration_in_bars
         )  # (batch_size, num_bars, dim)
+
+        if pos is None:
+            return global_feature
 
         global_feature_batch = []
         for i in range(global_feature.shape[0]):
@@ -450,12 +453,15 @@ class SegmentFullSongModel(nn.Module):
         max_length: int | None = None,
         prompt: TokenSequence | None = None,
         condition: torch.Tensor | None = None,
+        generate_note_callback: Callable[[tuple[int, int, int, int]], None] = None,
+        top_p: float = 0.95,
     ):
         """
         autoregressive sampling
         max_pos: number of frames of the output
         condition: (batch_size, length, dim)
         """
+        assert condition is None, "condition is not supported currently"
         device = next(iter(self.parameters())).device
         assert duration <= self.num_pos, (
             f"duration must be less than or equal to {self.num_pos}"
@@ -485,11 +491,20 @@ class SegmentFullSongModel(nn.Module):
         )
         segment_duration_tensor = torch.tensor([segment_duration], device=device)
 
+
+        global_feature = self.encode_bar_embeddings(
+            bar_embeddings,
+            bar_embeddings_mask,
+            shift_from_song_start_tensor,
+            song_duration_tensor,
+        )  # (batch_size, num_tokens, dim)
+
         current_pos = output.duration
 
         output.add_frame()  # the "start token"
 
         last_pitch_in_frame = None
+        cache = None
 
         for i in range(output.length, max_length):
             # check if max_length will be reached even if all the remaining tokens are frame tokens
@@ -499,22 +514,11 @@ class SegmentFullSongModel(nn.Module):
                     output.add_frame()
                 break
 
-            global_feature = self.encode_bar_embeddings(
-                bar_embeddings,
-                bar_embeddings_mask,
-                shift_from_song_start_tensor,
-                song_duration_tensor,
-                output.pos,
-            )  # (batch_size, num_tokens, dim)
 
-            if condition is not None:
-                actual_condition = torch.cat([condition, global_feature], dim=2)
-            else:
-                actual_condition = global_feature
 
-            feature = self.decoder(
+            feature, cache = self.decoder(
                 input=output,
-                condition=actual_condition,
+                condition=global_feature[:, (output.pos[0]+shift_from_song_start_tensor[0])//self.frames_per_bar],
                 context=encoded_context["context_feature"],
                 context_mask=encoded_context["context_mask"],
                 context_pos=encoded_context["context_pos"],
@@ -522,12 +526,16 @@ class SegmentFullSongModel(nn.Module):
                 song_duration=song_duration_tensor,
                 shift_from_segment_start=shift_from_segment_start_tensor,
                 segment_duration=segment_duration_tensor,
-            )  # (b=1, length, dim)
+                return_hiddens=True,
+                # cache=cache,
+            )  # (b=1, 1, dim)
+            
+            feature = feature[:, -1, :]
 
-            token_type_logits = self.token_type_classifier(feature[:, -1, :])[
+            token_type_logits = self.token_type_classifier(feature)[
                 0
             ]  # (class)
-            token_type_pred = nucleus_sample(token_type_logits, 0.95)  # scalar
+            token_type_pred = nucleus_sample(token_type_logits, top_p)  # scalar
 
             if token_type_pred == TokenSequence.FRAME:  # frame
                 current_pos += 1
@@ -540,7 +548,7 @@ class SegmentFullSongModel(nn.Module):
 
             elif token_type_pred == TokenSequence.NOTE:  # note
                 # sample pitch
-                pitch_logits = self.pitch_classifier(feature[:, -1, :])[0]  # (class)
+                pitch_logits = self.pitch_classifier(feature)[0]  # (class)
                 # predicted pitch must ascend in the same frame
                 if last_pitch_in_frame is not None:
                     if last_pitch_in_frame == self.num_pitch - 1:
@@ -553,24 +561,27 @@ class SegmentFullSongModel(nn.Module):
                         last_pitch_in_frame = None
                         continue
                     pitch_logits[: last_pitch_in_frame + 1] = -float("inf")
-                pitch_pred = nucleus_sample(pitch_logits, 0.95)  # scalar
+                pitch_pred = nucleus_sample(pitch_logits, top_p)  # scalar
 
                 # sample velocity
                 out_pitch_emb = self.out_pitch_emb(pitch_pred.unsqueeze(0))
                 velocity_logits = self.velocity_classifier(
-                    feature[:, -1, :] + out_pitch_emb
+                    feature + out_pitch_emb
                 )[0]  # (class)
-                velocity_pred = nucleus_sample(velocity_logits, 0.95)  # scalar
+                velocity_pred = nucleus_sample(velocity_logits, top_p)  # scalar
 
                 # sample duration
                 out_velocity_emb = self.out_velocity_emb(velocity_pred.unsqueeze(0))
                 duration_logits = self.duration_classifier(
-                    feature[:, -1, :] + out_pitch_emb + out_velocity_emb
+                    feature + out_pitch_emb + out_velocity_emb
                 )[0]  # (class)
-                duration_pred = nucleus_sample(duration_logits, 0.95)  # scalar
+                duration_pred = nucleus_sample(duration_logits, top_p)  # scalar
 
                 output.add_note(pitch_pred, velocity_pred, duration_pred)
                 last_pitch_in_frame = pitch_pred
+
+                if generate_note_callback is not None:
+                    generate_note_callback((shift_from_song_start + current_pos, pitch_pred.item() + self.pitch_range[0], velocity_pred.item(), duration_pred.item()))
 
             else:
                 raise ValueError(f"What is this token type: {token_type_pred}")
@@ -579,6 +590,7 @@ class SegmentFullSongModel(nn.Module):
         assert output.duration == duration
         return output
 
+    @torch.no_grad()
     def sample_segment(
         self,
         context: Sequence[SegmentItem],
@@ -590,21 +602,22 @@ class SegmentFullSongModel(nn.Module):
         max_length: int | None = None,
         prompt: TokenSequence | None = None,
         condition: torch.Tensor | None = None,
+        duration: int | None = None,
+        generate_note_callback: Callable[[tuple[int, int, int, int]], None] = None,
     ):
-        if DEBUG:
-            print(
-                f"sample_segment: {shift_from_song_start // 32}, {((shift_from_song_start + segment_duration) // 32)}"
-            )
+        logger.info(f"sample_segment: [{shift_from_song_start // 32}, {((shift_from_song_start + duration) // 32)})")
         device = next(iter(self.parameters())).device
         encoded_context = self.encode_context(
             context, torch.tensor([shift_from_song_start], device=device)
         )
 
+        if duration is None:
+            duration = segment_duration
+
         if segment_duration <= self.max_forward_duration:
-            if DEBUG:
-                print(bar_embeddings_mask.int())
+            logger.info(f"bar_embeddings_mask: {bar_embeddings_mask.int().tolist()}")
             return self.sample(
-                duration=segment_duration,
+                duration=duration,
                 context=encoded_context,
                 shift_from_segment_start=0,
                 segment_duration=segment_duration,
@@ -615,15 +628,29 @@ class SegmentFullSongModel(nn.Module):
                 max_length=max_length,
                 prompt=prompt,
                 condition=condition,
+                generate_note_callback=generate_note_callback,
             )
 
         else:
             # Segment length is longer than length of self-attention.
             # So we need to sample segment in a loop.
-            result = TokenSequence(device=device)
+            prompt_duration = prompt.duration if prompt is not None else 0
+            
+            if prompt is not None:
+                result = prompt.clone()
+                prompt_bars = prompt_duration // self.frames_per_bar
+                for bar_idx in range(prompt_bars - 8):
+                    bar_idx_from_song_start = bar_idx + (shift_from_song_start // self.frames_per_bar)
+                    bar_embeddings[0, bar_idx_from_song_start] = (
+                        self.calculate_bar_embedding(result.slice_pos(bar_idx * self.frames_per_bar, (bar_idx + 1) * self.frames_per_bar))
+                    )
+                    bar_embeddings_mask[0, bar_idx_from_song_start] = True
+                    
+            else:
+                result = TokenSequence(device=device)
             for target_duration in range(
-                self.frames_per_bar,
-                segment_duration + self.frames_per_bar,
+                prompt_duration + self.frames_per_bar,
+                duration + self.frames_per_bar,
                 self.frames_per_bar,
             ):  # 32, 64, ...
                 sample_output_duration = min(target_duration, self.max_forward_duration)
@@ -653,35 +680,17 @@ class SegmentFullSongModel(nn.Module):
                     )
                     bar_embeddings_mask[0, bar_idx_to_embed_from_song_start] = True
 
-                    if DEBUG:
-                        print(
-                            "encoded",
-                            last_truncated_bar,
-                            "duration",
-                            result.duration // self.frames_per_bar,
-                            "slice",
-                            (bar_idx_to_embed, bar_idx_to_embed + 1),
-                            "sliced_duration",
-                            tokens_to_embed.duration // self.frames_per_bar,
-                        )
+                    logger.info(f"encoded {bar_idx_to_embed_from_song_start}")
 
-                if DEBUG:
-                    print(bar_embeddings_mask.int())
-                    print(result.duration, sample_input_duration, truncate)
-                    print(
-                        "sample:",
-                        (shift_from_song_start + truncate) // self.frames_per_bar,
-                        "to",
-                        (shift_from_song_start + truncate + sample_output_duration)
-                        // self.frames_per_bar,
-                    )
-                prompt = result.slice_pos(truncate, None)
+                logger.info(f"bar_embeddings_mask: {bar_embeddings_mask.int().tolist()}")
+                logger.info(f"sampling [{((shift_from_song_start + truncate) // self.frames_per_bar)}, {((shift_from_song_start + truncate + sample_output_duration) // self.frames_per_bar)})")
+                prompt_for_sample = result.slice_pos(truncate, None)
 
-                assert prompt.duration <= self.max_forward_duration
+                assert prompt_for_sample.duration <= self.max_forward_duration
 
                 sample_output = self.sample(
-                    prompt=prompt,
-                    duration=prompt.duration + self.frames_per_bar,
+                    prompt=prompt_for_sample,
+                    duration=prompt_for_sample.duration + self.frames_per_bar,
                     context=encoded_context,
                     shift_from_segment_start=truncate,
                     segment_duration=segment_duration,
@@ -690,6 +699,7 @@ class SegmentFullSongModel(nn.Module):
                     condition=condition,
                     bar_embeddings=bar_embeddings,
                     bar_embeddings_mask=bar_embeddings_mask,
+                    generate_note_callback=generate_note_callback,
                 )
 
                 result += sample_output.slice_pos(
@@ -698,9 +708,10 @@ class SegmentFullSongModel(nn.Module):
 
                 assert result.duration == target_duration
 
-            assert result.duration == segment_duration
+            assert result.duration == duration
             return result
 
+    @torch.no_grad()
     def sample_song(
         self,
         labels: str,
@@ -774,16 +785,6 @@ class SegmentFullSongModel(nn.Module):
                 segment["start"], segment["end"], self.frames_per_bar
             ):
                 pos_in_segment = pos_in_song - segment["start"]
-                if DEBUG:
-                    print(
-                        "aaa",
-                        segment["pianoroll"]
-                        .slice(pos_in_segment, pos_in_segment + self.frames_per_bar)
-                        .duration,
-                        segment["pianoroll"].duration,
-                        pos_in_segment,
-                        pos_in_segment + self.frames_per_bar,
-                    )
                 bar_embeddings[0, pos_in_song // self.frames_per_bar] = (
                     self.calculate_bar_embedding(
                         TokenSequence.from_pianorolls(
@@ -939,6 +940,7 @@ class SegmentFullSongModel(nn.Module):
             composed_segments.append(composed_segment)
 
             calculate_bar_embeddings_for_segment(composed_segment)
+            logger.info(f"encoded [{composed_segment['start'] // self.frames_per_bar}, {composed_segment['end'] // self.frames_per_bar})")
 
         composed_segments_sorted = sorted(composed_segments, key=lambda x: x["start"])
         assert composed_segments_sorted[0]["start"] == 0
@@ -967,8 +969,7 @@ class SegmentFullSongModel(nn.Module):
 
         return full_song, annotations
 
-    @dataclass
-    class Segment(Generic[T]):
+    class Segment(TypedDict):
         """
         This class is used to make the SegmentFullSong.generate() api clear and easy to use.
         It is different from the SegmentFullSongModel.SegmentItem class.
@@ -977,42 +978,130 @@ class SegmentFullSongModel(nn.Module):
         start_bar: int
         end_bar: int
         label: str
-        content: T | None
 
+    @torch.no_grad()
     def generate(
         self,
-        existing_segments: list[Segment[Pianoroll]],
-        target_segment: Segment[Pianoroll],
-        song_duration: int,
-    ) -> Segment[Pianoroll]:
+        segments: Sequence[Segment],
+        original_pianoroll: Pianoroll,
+        target_start_bar: int,
+        target_end_bar: int,
+        generate_note_callback: Callable[[tuple[int, int, int, int]], None] = None,
+    ) -> Pianoroll:
         """
-        labels: list of labels
-        lengths_in_bars: list of segment lengths in bars
-        compose_order: list of segment indices
-        given_segments: list of given segments. Must be first n of compose_order.
+        segments: list of segments to specify the song's structure
+        original_pianoroll: the original pianoroll
+        target_start_bar: the start bar of the target segment
+        target_end_bar: the end bar of the target segment (exclusive)
         """
-        device = next(iter(self.parameters())).device
 
-        existing_segments_raw = []
+        logger.info(f"Generating segment from {target_start_bar} to {target_end_bar}")
 
-        for i, existing_segment in enumerate(existing_segments):
-            existing_segments_raw.append(
-                {
-                    "pianoroll": existing_segment.content,
-                    "start": existing_segments[i].start_bar * self.frames_per_bar,
-                    "end": existing_segments[i].end_bar * self.frames_per_bar,
-                    "label": existing_segments[i].label,
+        device = next(self.parameters()).device
+        song_duration = original_pianoroll.duration
+        target_start_frame = target_start_bar * self.frames_per_bar
+        target_end_frame = target_end_bar * self.frames_per_bar
+
+        original_pianoroll.metadata.name = "input"
+
+        def is_complete_segment(segment: SegmentFullSongModel.Segment) -> bool:
+            if (
+                len(
+                    original_pianoroll.slice(
+                        segment["start_bar"] * self.frames_per_bar,
+                        segment["end_bar"] * self.frames_per_bar,
+                    ).notes
+                )
+                == 0
+            ):
+                return False
+            # if overlap with target, return False
+            if segment["start_bar"] <= target_start_bar < segment["end_bar"]:
+                return False
+            if segment["start_bar"] < target_end_bar <= segment["end_bar"]:
+                return False
+            return True
+
+        existing_segments = [
+            {
+                "start": segment["start_bar"] * self.frames_per_bar,
+                "end": segment["end_bar"] * self.frames_per_bar,
+                "label": segment["label"],
+                "pianoroll": original_pianoroll.slice(
+                    segment["start_bar"] * self.frames_per_bar,
+                    segment["end_bar"] * self.frames_per_bar,
+                ),
+            }
+            for segment in segments
+            if is_complete_segment(segment)
+        ]
+
+        # identify segments that overlap with target segment
+        pre_overlap_segment = None
+        post_overlap_segment = None
+        for segment in segments:
+            if segment["start_bar"] < target_start_bar < segment["end_bar"]:
+                pr = original_pianoroll.slice(
+                    segment["start_bar"] * self.frames_per_bar,
+                    target_start_bar * self.frames_per_bar,
+                )
+                pre_overlap_segment = {
+                    "start": segment["start_bar"] * self.frames_per_bar,
+                    "end": segment["end_bar"] * self.frames_per_bar,
+                    "label": segment["label"],
+                    "pianoroll": pr,
                 }
-            )
 
-        target_segment_raw = {
-            "pianoroll": target_segment.content,
-            "start": target_segment.start_bar * self.frames_per_bar,
-            "end": target_segment.end_bar * self.frames_per_bar,
-            "label": target_segment.label,
-        }
+            if segment["start_bar"] < target_end_bar < segment["end_bar"]:
+                pr = original_pianoroll.slice(
+                    target_end_bar * self.frames_per_bar,
+                    segment["end_bar"] * self.frames_per_bar,
+                )
+                if len(pr.notes) > 0:
+                    post_overlap_segment = {
+                        "start": segment["start_bar"] * self.frames_per_bar,
+                        "end": segment["end_bar"] * self.frames_per_bar,
+                        "label": segment["label"],
+                        "pianoroll": pr,
+                    }
 
-        # embed bars in given segments
+        segments_to_generate = []
+        cursor = target_start_frame
+        for segment in segments:
+            if (
+                cursor >= segment["start_bar"] * self.frames_per_bar
+                and cursor < segment["end_bar"] * self.frames_per_bar
+            ):
+                segments_to_generate.append(
+                    {
+                        "start": segment["start_bar"] * self.frames_per_bar,
+                        "end": segment["end_bar"] * self.frames_per_bar,
+                        "label": segment["label"],
+                    }
+                )
+                cursor = segment["end_bar"] * self.frames_per_bar
+                if cursor >= target_end_frame:
+                    break
+
+        
+        for segment in existing_segments:
+            if segment["start"] < target_start_frame:
+                logger.info(f"Existing segment \"{segment['label']}\": [{segment['start'] // self.frames_per_bar},{segment['end'] // self.frames_per_bar})")
+        
+        if pre_overlap_segment is not None:
+            logger.info(f"Partial existing segment \"{pre_overlap_segment['label']}\": [{pre_overlap_segment['start'] // self.frames_per_bar},{target_start_bar})")
+            
+        for segment in segments_to_generate:
+            logger.info(f"Segment to generate \"{segment['label']}\": [{max(segment['start'] // self.frames_per_bar, target_start_bar)},{min(segment['end'] // self.frames_per_bar, target_end_bar)})")
+        
+        if post_overlap_segment is not None:
+            logger.info(f"Partial existing segment \"{post_overlap_segment['label']}\": [{target_end_bar},{post_overlap_segment['end'] // self.frames_per_bar})")
+        
+        for segment in existing_segments:
+            if segment["end"] > target_end_frame:
+                logger.info(f"Existing segment \"{segment['label']}\": [{segment['start'] // self.frames_per_bar},{segment['end'] // self.frames_per_bar})")
+        
+
         bar_embeddings = torch.zeros(
             1,
             song_duration // self.frames_per_bar,
@@ -1020,299 +1109,237 @@ class SegmentFullSongModel(nn.Module):
             device=device,
         )
         bar_embeddings_mask = torch.zeros(
-            bar_embeddings.shape[0:2], device=device, dtype=torch.bool
+            (1, song_duration // self.frames_per_bar), device=device, dtype=torch.bool
         )
 
-        def calculate_bar_embeddings_for_segment(segment: dict):
-            for pos_in_song in range(
-                segment["start"], segment["end"], self.frames_per_bar
-            ):
-                pos_in_segment = pos_in_song - segment["start"]
-                if DEBUG:
-                    print(
-                        "aaa",
-                        segment["pianoroll"]
-                        .slice(pos_in_segment, pos_in_segment + self.frames_per_bar)
-                        .duration,
-                        segment["pianoroll"].duration,
-                        pos_in_segment,
-                        pos_in_segment + self.frames_per_bar,
+        def calculate_bar_embeddings_between(
+            pianoroll: Pianoroll, start_bar: int, end_bar: int
+        ):
+            assert pianoroll.duration == (end_bar - start_bar) * self.frames_per_bar
+            for local_bar_idx, bar_idx in enumerate(range(start_bar, end_bar)):
+                bar_embeddings_mask[0, bar_idx] = True
+                bar_embeddings[0, bar_idx] = self.calculate_bar_embedding(
+                    TokenSequence.from_pianorolls(
+                        [pianoroll.slice(local_bar_idx * self.frames_per_bar, (local_bar_idx + 1) * self.frames_per_bar)],
+                        max_note_duration=self.max_note_duration,
+                        device=device,
+                        max_tokens=self.max_tokens,
                     )
-                bar_embeddings[0, pos_in_song // self.frames_per_bar] = (
-                    self.calculate_bar_embedding(
-                        TokenSequence.from_pianorolls(
-                            [
-                                segment["pianoroll"].slice(
-                                    pos_in_segment, pos_in_segment + self.frames_per_bar
-                                )
-                            ],
+                )
+
+        for segment in existing_segments:
+            calculate_bar_embeddings_between(
+                segment["pianoroll"],
+                segment["start"] // self.frames_per_bar,
+                segment["end"] // self.frames_per_bar,
+            )
+
+        # if pre_overlap_segment is not None:
+        #     # calculate bar embeddings between pre_overlap_segment["start"] and target_start_bar
+        #     calculate_bar_embeddings_between(
+        #         pre_overlap_segment["pianoroll"],
+        #         pre_overlap_segment["start"] // self.frames_per_bar,
+        #         target_start_bar,
+        #     )
+
+        if (
+            post_overlap_segment is not None
+            and len(
+                original_pianoroll.slice(
+                    target_end_frame, post_overlap_segment["end"]
+                ).notes
+            )
+            > 0
+        ):
+            # calculate bar embeddings between target_end_bar and post_overlap_segment["end"]
+            calculate_bar_embeddings_between(
+                post_overlap_segment["pianoroll"],
+                target_end_bar,
+                post_overlap_segment["end"] // self.frames_per_bar,
+            )
+
+        for target_segment in segments_to_generate:
+            context_info_dict = get_context_for_target_segment(
+                existing_segments, target_segment
+            )
+            context: list[SegmentFullSongModel.SegmentItem] = []
+            for context_name in ["left", "right", "seed", "reference"]:
+                context_info = context_info_dict[context_name]
+                if context_info is None:
+                    # just a dummy context with zero duration, which will take no effect in the model
+                    context.append(
+                        {
+                            "tokens": TokenSequence(device=device),
+                            "shift_from_song_start": torch.tensor([0], device=device),
+                            "segment_duration": torch.tensor([0], device=device),
+                            "song_duration": torch.tensor(
+                                [song_duration], device=device
+                            ),
+                            "shift_from_segment_start": torch.tensor(
+                                [0], device=device
+                            ),
+                        }
+                    )
+                    continue
+
+                def find_segment_by_start(segments: list[dict], start: int):
+                    for segment in segments:
+                        if segment["start"] == start:
+                            return segment
+                    raise ValueError(f"Segment not found: {start}")
+
+                context_segment = find_segment_by_start(
+                    existing_segments, context_info["start"]
+                )
+                max_context_duration = self.max_context_duration[context_name]
+                context_duration = context_segment["end"] - context_segment["start"]
+                if context_duration > max_context_duration:
+                    if context_name == "left":
+                        context_pr = context_segment["pianoroll"][
+                            context_duration - max_context_duration :
+                        ]
+                        shift_from_song_start = (
+                            context_segment["end"] - max_context_duration
+                        )
+                        shift_from_segment_start = (
+                            shift_from_song_start - context_segment["start"]
+                        )
+                    else:
+                        context_pr = context_segment["pianoroll"][:max_context_duration]
+                        shift_from_song_start = context_segment["start"]
+                        shift_from_segment_start = 0
+                else:
+                    context_pr = context_segment["pianoroll"]
+                    shift_from_song_start = context_segment["start"]
+                    shift_from_segment_start = 0
+
+                context.append(
+                    {
+                        "tokens": TokenSequence.from_pianorolls(
+                            [context_pr],
+                            need_frame_tokens=False,
                             max_note_duration=self.max_note_duration,
                             device=device,
                             max_tokens=self.max_tokens,
-                        )
-                    )
-                )
-
-                bar_embeddings_mask[0, pos_in_song // self.frames_per_bar] = True
-
-        for segment in existing_segments_raw:
-            calculate_bar_embeddings_for_segment(segment)
-
-        def find_segment_by_start(segments: list[dict], start: int):
-            for segment in segments:
-                if segment["start"] == start:
-                    return segment
-            raise ValueError(f"Segment not found: {start}")
-
-        """ prepare context for generation """
-
-        context_info_dict = get_context_for_target_segment(
-            existing_segments_raw, target_segment_raw
-        )
-        context: list[SegmentFullSongModel.SegmentItem] = []
-        for context_name in ["left", "right", "seed", "reference"]:
-            context_info = context_info_dict[context_name]
-            if context_info is None:
-                # just a dummy context with zero token, which will take no effect in the model
-                context.append(
-                    {
-                        "tokens": TokenSequence(device=device),
-                        "shift_from_song_start": torch.tensor([0], device=device),
-                        "segment_duration": torch.tensor([0], device=device),
+                        ),
                         "song_duration": torch.tensor([song_duration], device=device),
-                        "shift_from_segment_start": torch.tensor([0], device=device),
+                        "shift_from_song_start": torch.tensor(
+                            [shift_from_song_start], device=device
+                        ),
+                        "segment_duration": torch.tensor(
+                            [context_segment["end"] - context_segment["start"]],
+                            device=device,
+                        ),
+                        "shift_from_segment_start": torch.tensor(
+                            [shift_from_segment_start], device=device
+                        ),
                     }
                 )
-                continue
-            context_segment = find_segment_by_start(
-                existing_segments_raw, context_info["start"]
-            )
-            max_context_duration = self.max_context_duration[context_name]
-            context_duration = context_segment["end"] - context_segment["start"]
-            if context_duration > max_context_duration:
-                if context_name == "left":
-                    context_pr = context_segment["pianoroll"][
-                        context_duration - max_context_duration :
-                    ]
-                    shift_from_song_start = (
-                        context_segment["end"] - max_context_duration
-                    )
-                    shift_from_segment_start = (
-                        shift_from_song_start - context_segment["start"]
-                    )
-                else:
-                    context_pr = context_segment["pianoroll"][:max_context_duration]
-                    shift_from_song_start = context_segment["start"]
-                    shift_from_segment_start = 0
-            else:
-                context_pr = context_segment["pianoroll"]
-                shift_from_song_start = context_segment["start"]
-                shift_from_segment_start = 0
+                logger.info(f"context {context_name}: {context_pr}")
 
-            if DEBUG:
-                print(
-                    context_name,
-                    context_pr.duration,
-                    context_pr,
-                    {
-                        "song_duration": song_duration // self.frames_per_bar,
-                        "shift_from_song_start": shift_from_song_start
-                        // self.frames_per_bar,
-                        "segment_duration": context_duration // self.frames_per_bar,
-                        "shift_from_segment_start": shift_from_segment_start
-                        // self.frames_per_bar,
-                    },
+
+            prompt = None
+            if (
+                pre_overlap_segment is not None
+                and target_segment == segments_to_generate[0]
+            ):
+                prompt = TokenSequence.from_pianorolls(
+                    [
+                        original_pianoroll.slice(
+                            pre_overlap_segment["start"], target_start_frame
+                        )
+                    ],
+                    max_note_duration=self.max_note_duration,
+                    device=device,
+                    max_tokens=self.max_tokens,
                 )
 
-            context.append(
-                {
+            if (
+                post_overlap_segment is not None
+                and target_segment == segments_to_generate[-1]
+                and len(
+                    original_pianoroll.slice(
+                        target_end_frame, post_overlap_segment["end"]
+                    ).notes
+                )
+                > 0
+            ):
+                # do a trick that override the left context with the content in the post_overlap_segment
+                pr = original_pianoroll.slice(
+                    target_end_frame,
+                    min(post_overlap_segment["end"], target_end_frame + self.max_context_duration["right"]),
+                )
+                new_right_context = {
                     "tokens": TokenSequence.from_pianorolls(
-                        [context_pr],
-                        need_frame_tokens=False,
+                        [
+                            pr
+                        ],
                         max_note_duration=self.max_note_duration,
                         device=device,
                         max_tokens=self.max_tokens,
                     ),
                     "song_duration": torch.tensor([song_duration], device=device),
                     "shift_from_song_start": torch.tensor(
-                        [shift_from_song_start], device=device
+                        [target_end_frame], device=device
                     ),
                     "segment_duration": torch.tensor(
-                        [context_segment["end"] - context_segment["start"]],
+                        [pr.duration],
                         device=device,
                     ),
-                    "shift_from_segment_start": torch.tensor(
-                        [shift_from_segment_start], device=device
-                    ),
+                    "shift_from_segment_start": torch.tensor([0], device=device),
+                }
+                context[1] = new_right_context  # type: ignore
+                logger.info(f"overriding context right: {pr}")
+
+
+            # generate target segment
+
+            generated_target = self.sample_segment(
+                context=context,
+                shift_from_song_start=target_segment["start"],
+                segment_duration=target_segment["end"] - target_segment["start"],
+                song_duration=song_duration,
+                bar_embeddings=bar_embeddings,
+                bar_embeddings_mask=bar_embeddings_mask,
+                prompt=prompt,
+                duration=min(target_segment["end"], target_end_frame) - target_segment["start"],
+                generate_note_callback=generate_note_callback,
+            ).to_pianoroll()
+
+            # if the last generated segment is partial, extend it to the end of the segment
+            if target_segment == segments_to_generate[-1]:
+                if post_overlap_segment is not None:
+                    generated_target = Pianoroll.cat([generated_target, post_overlap_segment["pianoroll"]])
+                else:
+                    generated_target.duration = target_segment["end"] - target_segment["start"]
+                assert generated_target.duration == target_segment["end"] - target_segment["start"]
+
+            generated_target.metadata.name = f"generated_{target_segment['label']}"
+
+            # merge generated target into existing segments
+            existing_segments.append(
+                {
+                    "start": target_segment["start"],
+                    "end": target_segment["end"],
+                    "label": target_segment["label"],
+                    "pianoroll": generated_target,
                 }
             )
 
-        """ generate segment """
+            if target_segment != segments_to_generate[-1]:
+                # calculate bar embeddings between target_segment["start"] and target_segment["end"]
+                calculate_bar_embeddings_between(
+                    generated_target,
+                    target_segment["start"] // self.frames_per_bar,
+                    target_segment["end"] // self.frames_per_bar,
+                )
 
-        if target_segment_raw["pr"] is None:
-            prompt = None
-        else:
-            prompt = TokenSequence.from_pianorolls(
-                [target_segment_raw["pianoroll"]],
-                max_note_duration=self.max_note_duration,
-                device=device,
-            )
-
-        sample = self.sample_segment(
-            context=context,
-            shift_from_song_start=target_segment_raw["start"],
-            segment_duration=target_segment_raw["end"] - target_segment_raw["start"],
-            song_duration=song_duration,
-            bar_embeddings=bar_embeddings,
-            bar_embeddings_mask=bar_embeddings_mask,
-            prompt=prompt,
-        )
-
-        min_pitch = self.pitch_range[0]
-
-        result_pr = sample.to_pianoroll(min_pitch)
-
-        # debug purpose
-        result_pr.metadata.name = target_segment.label + str(len(existing_segments_raw))
-
-        return SegmentFullSongModel.Segment(
-            start_bar=target_segment.start_bar,
-            end_bar=target_segment.end_bar,
-            label=target_segment.label,
-            content=result_pr,
-        )
-
-# def test():
-#     device = "cpu"
-#     from segment_full_song.models.factory import create_model
-
-#     encoder_decoder = cast(
-#         EncoderDecoder,
-#         create_model(OmegaConf.load("config/simple_ar/model_vae.yaml").model),
-#     )
-#     from safetensors.torch import load_file
-
-#     encoder_decoder.load_state_dict(
-#         load_file(
-#             "wandb/run-20250404_013005-i41ffa2m/files/checkpoints/epoch=4-step=1000000.safetensors",
-#             device=device,
-#         )
-#     )
-
-#     model = SegmentFullSongModel(
-#         bar_embedder=encoder_decoder,
-#         dim=128,
-#         encoder_num_layers=6,
-#         decoder_num_layers=6,
-#         pitch_range=[21, 108],
-#         max_forward_duration=32 * 8,
-#         max_song_duration=32 * 256,
-#         max_context_duration={"left": 32, "right": 32, "seed": 32, "reference": 32},
-#         max_tokens_rate=4.5,
-#         latent_dim=128,
-#         frames_per_bar=32,
-#         condition_dim=0,
-#     ).to(device)
-
-#     context: Sequence[SegmentFullSongModel.SegmentItem] = [
-#         {
-#             "tokens": TokenSequence.from_pianorolls(
-#                 [
-#                     Pianoroll([Note(0, 60, 100), Note(3, 62, 100)]),
-#                 ]
-#             ).to(device),
-#             "shift_from_song_start": torch.tensor([32]).to(device),
-#             "segment_duration": torch.tensor([32 * 8]).to(device),
-#             "shift_from_segment_start": torch.tensor([0]).to(device),
-#             "song_duration": torch.tensor([1024]).to(device),
-#         },
-#         {
-#             "tokens": TokenSequence.from_pianorolls(
-#                 [
-#                     Pianoroll(
-#                         [Note(20, 60, 100), Note(23, 62, 100), Note(28, 62, 100)]
-#                     ),
-#                 ]
-#             ).to(device),
-#             "shift_from_song_start": torch.tensor([-32]).to(device),
-#             "segment_duration": torch.tensor([32 * 8]).to(device),
-#             "shift_from_segment_start": torch.tensor([0]).to(device),
-#             "song_duration": torch.tensor([1024]).to(device),
-#         },
-#     ]
-
-#     model.eval()
-#     output, _ = model.sample_song(
-#         labels="ABAB",
-#         lengths_in_bars=[1, 2, 10, 12],
-#         compose_order=[0, 1, 3, 2],
-#         given_segments=[
-#             Pianoroll([Note(0, 60, 100), Note(3, 28, 100)]),
-#             Pianoroll([Note(20, 60, 100), Note(23, 62, 100), Note(61, 62, 100)]),
-#         ],
-#     )
-#     output.to_midi("output.mid")
-
-#     context: Sequence[SegmentFullSongModel.SegmentItem] = [
-#         {
-#             "tokens": TokenSequence.from_pianorolls(
-#                 [
-#                     Pianoroll([Note(0, 60, 100), Note(3, 62, 100)]),
-#                     Pianoroll([Note(0, 60, 100), Note(61, 62, 100)]),
-#                 ]
-#             ).to(device),
-#             "shift_from_song_start": torch.tensor([32, 128]).to(device),
-#             "segment_duration": torch.tensor([32 * 8, 32 * 8]).to(device),
-#             "shift_from_segment_start": torch.tensor([0, 0]).to(device),
-#             "song_duration": torch.tensor([1024, 1024]).to(device),
-#         },
-#         {
-#             "tokens": TokenSequence.from_pianorolls(
-#                 [
-#                     Pianoroll(
-#                         [Note(20, 60, 100), Note(23, 62, 100), Note(28, 62, 100)]
-#                     ),
-#                     Pianoroll([Note(20, 60, 100), Note(23, 62, 100)]),
-#                 ]
-#             ).to(device),
-#             "shift_from_song_start": torch.tensor([128, 64]).to(device),
-#             "segment_duration": torch.tensor([32 * 8, 32 * 8]).to(device),
-#             "shift_from_segment_start": torch.tensor([0, 0]).to(device),
-#             "song_duration": torch.tensor([1024, 1024]).to(device),
-#         },
-#     ]
-
-#     x = TokenSequence.from_pianorolls(
-#         [
-#             Pianoroll([Note(0, 60, 100), Note(3, 62, 100), Note(3, 89, 100)]),
-#             Pianoroll([Note(0, 60, 100), Note(61, 62, 100)]),
-#         ]
-#     ).to(device)
-
-#     x = SegmentFullSongModel.SegmentItem(
-#         tokens=x,
-#         shift_from_song_start=torch.tensor([0, 0]).to(device),
-#         segment_duration=torch.tensor([32 * 8, 32 * 8]).to(device),
-#         shift_from_segment_start=torch.tensor([0, 0]).to(device),
-#         song_duration=torch.tensor([1024, 1024]).to(device),
-#     )
-
-#     bar_embeddings = torch.zeros(
-#         2,
-#         16,
-#         cast(VAEBottleneck, encoder_decoder.bottleneck).output_dim,
-#         device=device,
-#     )
-#     bar_embeddings_mask = torch.ones(2, 16, device=device, dtype=torch.bool)
-#     print(
-#         model(
-#             x=x,
-#             context=context,
-#             bar_embeddings=bar_embeddings,
-#             bar_embeddings_mask=bar_embeddings_mask,
-#         )
-#     )
-
-
-# if __name__ == "__main__":
-#     test()
+        # return the whole pianoroll
+        segments_sorted_by_start = sorted(existing_segments, key=lambda x: x["start"])
+        # return Pianoroll.cat(
+        #     [segment["pianoroll"] for segment in segments_sorted_by_start]
+        # ) >> segments_sorted_by_start[0]["start"]
+        result = Pianoroll([], duration=song_duration)
+        for segment in segments_sorted_by_start:
+            result += segment["pianoroll"] >> segment["start"]
+        return result

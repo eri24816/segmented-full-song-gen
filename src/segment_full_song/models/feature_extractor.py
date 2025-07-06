@@ -120,6 +120,8 @@ class FeatureExtractor(nn.Module):
         context: torch.Tensor | None = None,
         context_mask: torch.Tensor | None = None,
         context_pos: torch.Tensor | None = None,
+        cache: x_transformers.x_transformers.LayerIntermediates | None = None,
+        return_hiddens: bool = False,
     ):
         """
         - input: SymbolicRepresentation (batch_size, num_tokens)
@@ -197,6 +199,12 @@ class FeatureExtractor(nn.Module):
             in_attn_cond = self.in_attn_transform(condition)
         else:
             in_attn_cond = None
+        
+        if mask.all():
+            mask = None
+        
+        if cache is not None:
+            in_attn_cond = in_attn_cond[:, -1:]
 
         if self.use_cross_attn:
             if context.numel() == 0:
@@ -207,29 +215,45 @@ class FeatureExtractor(nn.Module):
                 context_mask = torch.zeros(input.batch_size, 1, device=input.device, dtype=torch.bool)
                 context_pos = torch.zeros(input.batch_size, 1, device=input.device, dtype=torch.long)
 
-            x = self.transformer(
+            if context_mask.all():
+                context_mask = None
+
+            transformer_output = self.transformer(
                 x,
                 mask=mask,
                 in_attn_cond=in_attn_cond,
-                pos=input.pos,  #! to check
+                pos=input.pos,
                 context=context,
                 context_mask=context_mask,
                 context_pos=context_pos,
+                cache=cache,
+                return_hiddens=return_hiddens,
             )  # (batch_size, num_tokens, dim)
         else:
-            x = self.transformer(
+            transformer_output = self.transformer(
                 x,
                 mask=mask,
                 in_attn_cond=in_attn_cond,
+                cache=cache,
+                return_hiddens=return_hiddens,
             )  # (batch_size, num_tokens, dim)
+
+        if return_hiddens:
+            x, hiddens = transformer_output
+        else:
+            x = transformer_output
 
         if self.reduce:
             # get the last token
             x = x[:, -1, :]  # (batch_size, dim)
-
-        if self.reduce:
             assert x.shape == (input.batch_size, self.dim)
         else:
-            assert x.shape == (input.batch_size, input.length, self.dim)
+            if cache is not None:
+                assert x.shape == (input.batch_size, 1, self.dim)
+            else:
+                assert x.shape == (input.batch_size, input.length, self.dim)
 
-        return x
+        if return_hiddens:
+            return x, hiddens
+        else:
+            return x
