@@ -531,8 +531,10 @@ class SegmentFullSongModel(nn.Module):
                 # cache=cache,
             )  # (b=1, 1, dim)
 
+
             feature = feature[:, -1, :]
 
+            token_type_logits = self.token_type_classifier(feature)[0]  # (class)
             token_type_logits = self.token_type_classifier(feature)[0]  # (class)
             token_type_pred = nucleus_sample(token_type_logits, top_p)  # scalar
 
@@ -564,6 +566,9 @@ class SegmentFullSongModel(nn.Module):
 
                 # sample velocity
                 out_pitch_emb = self.out_pitch_emb(pitch_pred.unsqueeze(0))
+                velocity_logits = self.velocity_classifier(feature + out_pitch_emb)[
+                    0
+                ]  # (class)
                 velocity_logits = self.velocity_classifier(feature + out_pitch_emb)[
                     0
                 ]  # (class)
@@ -647,10 +652,14 @@ class SegmentFullSongModel(nn.Module):
             # So we need to sample segment in a loop.
             prompt_duration = prompt.duration if prompt is not None else 0
 
+
             if prompt is not None:
                 result = prompt.clone()
                 prompt_bars = prompt_duration // self.frames_per_bar
                 for bar_idx in range(prompt_bars - 8):
+                    bar_idx_from_song_start = bar_idx + (
+                        shift_from_song_start // self.frames_per_bar
+                    )
                     bar_idx_from_song_start = bar_idx + (
                         shift_from_song_start // self.frames_per_bar
                     )
@@ -661,8 +670,15 @@ class SegmentFullSongModel(nn.Module):
                                 (bar_idx + 1) * self.frames_per_bar,
                             )
                         )
+                        self.calculate_bar_embedding(
+                            result.slice_pos(
+                                bar_idx * self.frames_per_bar,
+                                (bar_idx + 1) * self.frames_per_bar,
+                            )
+                        )
                     )
                     bar_embeddings_mask[0, bar_idx_from_song_start] = True
+
 
             else:
                 result = TokenSequence(device=device)
@@ -1122,8 +1138,13 @@ class SegmentFullSongModel(nn.Module):
                 if cursor >= target_end_frame:
                     break
 
+
         for segment in existing_segments:
             if segment["start"] < target_start_frame:
+                logger.info(
+                    f'Existing segment "{segment["label"]}": [{segment["start"] // self.frames_per_bar},{segment["end"] // self.frames_per_bar})'
+                )
+
                 logger.info(
                     f'Existing segment "{segment["label"]}": [{segment["start"] // self.frames_per_bar},{segment["end"] // self.frames_per_bar})'
                 )
@@ -1138,6 +1159,10 @@ class SegmentFullSongModel(nn.Module):
                 f'Segment to generate "{segment["label"]}": [{max(segment["start"] // self.frames_per_bar, target_start_bar)},{min(segment["end"] // self.frames_per_bar, target_end_bar)})'
             )
 
+            logger.info(
+                f'Segment to generate "{segment["label"]}": [{max(segment["start"] // self.frames_per_bar, target_start_bar)},{min(segment["end"] // self.frames_per_bar, target_end_bar)})'
+            )
+
         if post_overlap_segment is not None:
             logger.info(
                 f'Partial existing segment "{post_overlap_segment["label"]}": [{target_end_bar},{post_overlap_segment["end"] // self.frames_per_bar})'
@@ -1145,6 +1170,9 @@ class SegmentFullSongModel(nn.Module):
 
         for segment in existing_segments:
             if segment["end"] > target_end_frame:
+                logger.info(
+                    f'Existing segment "{segment["label"]}": [{segment["start"] // self.frames_per_bar},{segment["end"] // self.frames_per_bar})'
+                )
                 logger.info(
                     f'Existing segment "{segment["label"]}": [{segment["start"] // self.frames_per_bar},{segment["end"] // self.frames_per_bar})'
                 )
