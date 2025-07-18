@@ -453,7 +453,8 @@ class SegmentFullSongModel(nn.Module):
         max_length: int | None = None,
         prompt: TokenSequence | None = None,
         condition: torch.Tensor | None = None,
-        generate_note_callback: Callable[[tuple[int, int, int, int]], None] = None,
+        generate_note_callback: Callable[[tuple[int, int, int, int]], None]
+        | None = None,
         top_p: float = 0.95,
     ):
         """
@@ -529,12 +530,10 @@ class SegmentFullSongModel(nn.Module):
                 return_hiddens=True,
                 # cache=cache,
             )  # (b=1, 1, dim)
-            
+
             feature = feature[:, -1, :]
 
-            token_type_logits = self.token_type_classifier(feature)[
-                0
-            ]  # (class)
+            token_type_logits = self.token_type_classifier(feature)[0]  # (class)
             token_type_pred = nucleus_sample(token_type_logits, top_p)  # scalar
 
             if token_type_pred == TokenSequence.FRAME:  # frame
@@ -565,9 +564,9 @@ class SegmentFullSongModel(nn.Module):
 
                 # sample velocity
                 out_pitch_emb = self.out_pitch_emb(pitch_pred.unsqueeze(0))
-                velocity_logits = self.velocity_classifier(
-                    feature + out_pitch_emb
-                )[0]  # (class)
+                velocity_logits = self.velocity_classifier(feature + out_pitch_emb)[
+                    0
+                ]  # (class)
                 velocity_pred = nucleus_sample(velocity_logits, top_p)  # scalar
 
                 # sample duration
@@ -581,7 +580,14 @@ class SegmentFullSongModel(nn.Module):
                 last_pitch_in_frame = pitch_pred
 
                 if generate_note_callback is not None:
-                    generate_note_callback((shift_from_song_start + current_pos, pitch_pred.item() + self.pitch_range[0], velocity_pred.item(), duration_pred.item()))
+                    generate_note_callback(
+                        (
+                            shift_from_song_start + current_pos,
+                            int(pitch_pred.item() + self.pitch_range[0]),
+                            int(velocity_pred.item()),
+                            int(duration_pred.item()),
+                        )
+                    )
 
             else:
                 raise ValueError(f"What is this token type: {token_type_pred}")
@@ -603,16 +609,20 @@ class SegmentFullSongModel(nn.Module):
         prompt: TokenSequence | None = None,
         condition: torch.Tensor | None = None,
         duration: int | None = None,
-        generate_note_callback: Callable[[tuple[int, int, int, int]], None] = None,
+        generate_note_callback: Callable[[tuple[int, int, int, int]], None]
+        | None = None,
+        top_p: float = 0.95,
     ):
-        logger.info(f"sample_segment: [{shift_from_song_start // 32}, {((shift_from_song_start + duration) // 32)})")
+        if duration is None:
+            duration = segment_duration
+
+        logger.info(
+            f"sample_segment: [{shift_from_song_start // 32}, {((shift_from_song_start + duration) // 32)}]"
+        )
         device = next(iter(self.parameters())).device
         encoded_context = self.encode_context(
             context, torch.tensor([shift_from_song_start], device=device)
         )
-
-        if duration is None:
-            duration = segment_duration
 
         if segment_duration <= self.max_forward_duration:
             logger.info(f"bar_embeddings_mask: {bar_embeddings_mask.int().tolist()}")
@@ -629,23 +639,31 @@ class SegmentFullSongModel(nn.Module):
                 prompt=prompt,
                 condition=condition,
                 generate_note_callback=generate_note_callback,
+                top_p=top_p,
             )
 
         else:
             # Segment length is longer than length of self-attention.
             # So we need to sample segment in a loop.
             prompt_duration = prompt.duration if prompt is not None else 0
-            
+
             if prompt is not None:
                 result = prompt.clone()
                 prompt_bars = prompt_duration // self.frames_per_bar
                 for bar_idx in range(prompt_bars - 8):
-                    bar_idx_from_song_start = bar_idx + (shift_from_song_start // self.frames_per_bar)
+                    bar_idx_from_song_start = bar_idx + (
+                        shift_from_song_start // self.frames_per_bar
+                    )
                     bar_embeddings[0, bar_idx_from_song_start] = (
-                        self.calculate_bar_embedding(result.slice_pos(bar_idx * self.frames_per_bar, (bar_idx + 1) * self.frames_per_bar))
+                        self.calculate_bar_embedding(
+                            result.slice_pos(
+                                bar_idx * self.frames_per_bar,
+                                (bar_idx + 1) * self.frames_per_bar,
+                            )
+                        )
                     )
                     bar_embeddings_mask[0, bar_idx_from_song_start] = True
-                    
+
             else:
                 result = TokenSequence(device=device)
             for target_duration in range(
@@ -682,8 +700,12 @@ class SegmentFullSongModel(nn.Module):
 
                     logger.info(f"encoded {bar_idx_to_embed_from_song_start}")
 
-                logger.info(f"bar_embeddings_mask: {bar_embeddings_mask.int().tolist()}")
-                logger.info(f"sampling [{((shift_from_song_start + truncate) // self.frames_per_bar)}, {((shift_from_song_start + truncate + sample_output_duration) // self.frames_per_bar)})")
+                logger.info(
+                    f"bar_embeddings_mask: {bar_embeddings_mask.int().tolist()}"
+                )
+                logger.info(
+                    f"sampling [{((shift_from_song_start + truncate) // self.frames_per_bar)}, {((shift_from_song_start + truncate + sample_output_duration) // self.frames_per_bar)})"
+                )
                 prompt_for_sample = result.slice_pos(truncate, None)
 
                 assert prompt_for_sample.duration <= self.max_forward_duration
@@ -700,6 +722,7 @@ class SegmentFullSongModel(nn.Module):
                     bar_embeddings=bar_embeddings,
                     bar_embeddings_mask=bar_embeddings_mask,
                     generate_note_callback=generate_note_callback,
+                    top_p=top_p,
                 )
 
                 result += sample_output.slice_pos(
@@ -714,10 +737,11 @@ class SegmentFullSongModel(nn.Module):
     @torch.no_grad()
     def sample_song(
         self,
-        labels: str,
+        labels: str | list[str],
         lengths_in_bars: list[int],
         compose_order: list[int],
         given_segments: list[Pianoroll],
+        top_p: float = 0.95,
     ):
         """
         labels: list of labels
@@ -921,6 +945,7 @@ class SegmentFullSongModel(nn.Module):
                 song_duration=full_duration,
                 bar_embeddings=bar_embeddings,
                 bar_embeddings_mask=bar_embeddings_mask,
+                top_p=top_p,
             )
 
             min_pitch = self.pitch_range[0]
@@ -940,7 +965,9 @@ class SegmentFullSongModel(nn.Module):
             composed_segments.append(composed_segment)
 
             calculate_bar_embeddings_for_segment(composed_segment)
-            logger.info(f"encoded [{composed_segment['start'] // self.frames_per_bar}, {composed_segment['end'] // self.frames_per_bar})")
+            logger.info(
+                f"encoded [{composed_segment['start'] // self.frames_per_bar}, {composed_segment['end'] // self.frames_per_bar})"
+            )
 
         composed_segments_sorted = sorted(composed_segments, key=lambda x: x["start"])
         assert composed_segments_sorted[0]["start"] == 0
@@ -969,45 +996,57 @@ class SegmentFullSongModel(nn.Module):
 
         return full_song, annotations
 
-    class Segment(TypedDict):
-        """
-        This class is used to make the SegmentFullSong.generate() api clear and easy to use.
-        It is different from the SegmentFullSongModel.SegmentItem class.
-        """
+    # class Segment(TypedDict):
+    #     """
+    #     This class is used to make the SegmentFullSong.generate() api clear and easy to use.
+    #     It is different from the SegmentFullSongModel.SegmentItem class.
+    #     """
 
-        start_bar: int
-        end_bar: int
-        label: str
+    #     start_bar: int
+    #     end_bar: int
+    #     label: str
+    Segment = TypedDict("Segment", {"start_bar": int, "end_bar": int, "label": str})
 
     @torch.no_grad()
     def generate(
         self,
         segments: Sequence[Segment],
-        original_pianoroll: Pianoroll,
-        target_start_bar: int,
-        target_end_bar: int,
-        generate_note_callback: Callable[[tuple[int, int, int, int]], None] = None,
+        target_start_bar: int | None = None,
+        target_end_bar: int | None = None,
+        existing_pianoroll: Pianoroll | None = None,
+        generate_note_callback: Callable[[tuple[int, int, int, int]], None]
+        | None = None,
     ) -> Pianoroll:
         """
         segments: list of segments to specify the song's structure
-        original_pianoroll: the original pianoroll
+        existing_pianoroll: the existing music content where the generation will add to
         target_start_bar: the start bar of the target segment
         target_end_bar: the end bar of the target segment (exclusive)
         """
 
+        if target_start_bar is None:
+            target_start_bar = 0
+        if target_end_bar is None:
+            target_end_bar = segments[-1]["end_bar"]
+        if existing_pianoroll is None:
+            existing_pianoroll = Pianoroll(
+                notes=[],
+                duration=target_end_bar * self.frames_per_bar,
+            )
+
         logger.info(f"Generating segment from {target_start_bar} to {target_end_bar}")
 
         device = next(self.parameters()).device
-        song_duration = original_pianoroll.duration
+        song_duration = existing_pianoroll.duration
         target_start_frame = target_start_bar * self.frames_per_bar
         target_end_frame = target_end_bar * self.frames_per_bar
 
-        original_pianoroll.metadata.name = "input"
+        existing_pianoroll.metadata.name = "input"
 
         def is_complete_segment(segment: SegmentFullSongModel.Segment) -> bool:
             if (
                 len(
-                    original_pianoroll.slice(
+                    existing_pianoroll.slice(
                         segment["start_bar"] * self.frames_per_bar,
                         segment["end_bar"] * self.frames_per_bar,
                     ).notes
@@ -1027,7 +1066,7 @@ class SegmentFullSongModel(nn.Module):
                 "start": segment["start_bar"] * self.frames_per_bar,
                 "end": segment["end_bar"] * self.frames_per_bar,
                 "label": segment["label"],
-                "pianoroll": original_pianoroll.slice(
+                "pianoroll": existing_pianoroll.slice(
                     segment["start_bar"] * self.frames_per_bar,
                     segment["end_bar"] * self.frames_per_bar,
                 ),
@@ -1041,7 +1080,7 @@ class SegmentFullSongModel(nn.Module):
         post_overlap_segment = None
         for segment in segments:
             if segment["start_bar"] < target_start_bar < segment["end_bar"]:
-                pr = original_pianoroll.slice(
+                pr = existing_pianoroll.slice(
                     segment["start_bar"] * self.frames_per_bar,
                     target_start_bar * self.frames_per_bar,
                 )
@@ -1053,7 +1092,7 @@ class SegmentFullSongModel(nn.Module):
                 }
 
             if segment["start_bar"] < target_end_bar < segment["end_bar"]:
-                pr = original_pianoroll.slice(
+                pr = existing_pianoroll.slice(
                     target_end_bar * self.frames_per_bar,
                     segment["end_bar"] * self.frames_per_bar,
                 )
@@ -1083,24 +1122,32 @@ class SegmentFullSongModel(nn.Module):
                 if cursor >= target_end_frame:
                     break
 
-        
         for segment in existing_segments:
             if segment["start"] < target_start_frame:
-                logger.info(f"Existing segment \"{segment['label']}\": [{segment['start'] // self.frames_per_bar},{segment['end'] // self.frames_per_bar})")
-        
+                logger.info(
+                    f'Existing segment "{segment["label"]}": [{segment["start"] // self.frames_per_bar},{segment["end"] // self.frames_per_bar})'
+                )
+
         if pre_overlap_segment is not None:
-            logger.info(f"Partial existing segment \"{pre_overlap_segment['label']}\": [{pre_overlap_segment['start'] // self.frames_per_bar},{target_start_bar})")
-            
+            logger.info(
+                f'Partial existing segment "{pre_overlap_segment["label"]}": [{pre_overlap_segment["start"] // self.frames_per_bar},{target_start_bar})'
+            )
+
         for segment in segments_to_generate:
-            logger.info(f"Segment to generate \"{segment['label']}\": [{max(segment['start'] // self.frames_per_bar, target_start_bar)},{min(segment['end'] // self.frames_per_bar, target_end_bar)})")
-        
+            logger.info(
+                f'Segment to generate "{segment["label"]}": [{max(segment["start"] // self.frames_per_bar, target_start_bar)},{min(segment["end"] // self.frames_per_bar, target_end_bar)})'
+            )
+
         if post_overlap_segment is not None:
-            logger.info(f"Partial existing segment \"{post_overlap_segment['label']}\": [{target_end_bar},{post_overlap_segment['end'] // self.frames_per_bar})")
-        
+            logger.info(
+                f'Partial existing segment "{post_overlap_segment["label"]}": [{target_end_bar},{post_overlap_segment["end"] // self.frames_per_bar})'
+            )
+
         for segment in existing_segments:
             if segment["end"] > target_end_frame:
-                logger.info(f"Existing segment \"{segment['label']}\": [{segment['start'] // self.frames_per_bar},{segment['end'] // self.frames_per_bar})")
-        
+                logger.info(
+                    f'Existing segment "{segment["label"]}": [{segment["start"] // self.frames_per_bar},{segment["end"] // self.frames_per_bar})'
+                )
 
         bar_embeddings = torch.zeros(
             1,
@@ -1145,7 +1192,7 @@ class SegmentFullSongModel(nn.Module):
         if (
             post_overlap_segment is not None
             and len(
-                original_pianoroll.slice(
+                existing_pianoroll.slice(
                     target_end_frame, post_overlap_segment["end"]
                 ).notes
             )
@@ -1245,7 +1292,7 @@ class SegmentFullSongModel(nn.Module):
             ):
                 prompt = TokenSequence.from_pianorolls(
                     [
-                        original_pianoroll.slice(
+                        existing_pianoroll.slice(
                             pre_overlap_segment["start"], target_start_frame
                         )
                     ],
@@ -1258,16 +1305,19 @@ class SegmentFullSongModel(nn.Module):
                 post_overlap_segment is not None
                 and target_segment == segments_to_generate[-1]
                 and len(
-                    original_pianoroll.slice(
+                    existing_pianoroll.slice(
                         target_end_frame, post_overlap_segment["end"]
                     ).notes
                 )
                 > 0
             ):
                 # do a trick that override the left context with the content in the post_overlap_segment
-                pr = original_pianoroll.slice(
+                pr = existing_pianoroll.slice(
                     target_end_frame,
-                    min(post_overlap_segment["end"], target_end_frame + self.max_context_duration["right"]),
+                    min(
+                        post_overlap_segment["end"],
+                        target_end_frame + self.max_context_duration["right"],
+                    ),
                 )
                 new_right_context = {
                     "tokens": TokenSequence.from_pianorolls(
