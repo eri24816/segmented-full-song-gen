@@ -52,6 +52,77 @@ def is_train_sample(song_name: str, train_set_ratio: float):
     # Return True if it's in the train split
     return hash_float < train_set_ratio
 
+channels_with_pop_music = """@0AdRiaNleE0
+@aldy32
+@AnCoongPiano
+@Animenzzz
+@AnimeProAnimeonPiano
+@bellaandlucas
+@BrokenFKey
+@bunnypiano1246
+@cateen_hayatosumino
+@catrionesmusic5311
+@CharlesSzczepanek
+@CIPMusic
+@DaranPianoTutorial
+@DooPiano
+@easypianoarrangements
+@flowmusicpiano
+@FonziMGM
+@FrancescoParrino
+@Fukane
+@GabrielPiano1
+@GerardChua
+@GrimCatPiano
+@HalcyonMusic
+@hanppyeom
+@JacobsPiano
+@jichanpark
+@JovaMusique
+@JoyceLeong
+@JRTranscription
+@KatherineCordova
+@Keyboard_Man
+@Keyboard_Yoon
+@KeyNomad503
+@Lamipiano
+@Lazypianist
+@marasy8
+@marvdamspiano
+@Montechait
+@mortengildbergmusic
+@Nicepianosheets
+@OORpiano%E9%8B%BC%E7%90%B4%E3%83%94%E3%82%A2%E3%83%8E
+@PairPiano
+@panpianoatelier
+@PatrikPietschmann
+@pianicast
+@PianoDeuss
+@PianoinU
+@pianonline-kdramaostkpop5811
+@pianotutorial7630
+@Piano-X
+@PineappleChord
+@RiyandiKusuma
+@RuRusPiano
+@SangeoMusic
+@SheetMusicBoss
+@ShinGiwonPiano
+@shingiwonpiano2
+@SLSMusic
+@solkeyspiano
+@st_vanie
+@suupiano
+@TehIshter
+@TheTheorist
+@thisispiano
+@TorbyBrand
+@YourPianoCover
+@zzzAnimeonPiano""".split("\n")
+
+
+def get_channel_of_song(song_name):
+    return song_name.split("/")[0]
 
 class PianorollDataset(Dataset):
     def __init__(
@@ -85,12 +156,14 @@ class PianorollDataset(Dataset):
                 song
                 for song in self.songs
                 if is_train_sample(song.song_name, train_set_ratio)
+                and get_channel_of_song(song.song_name) in channels_with_pop_music
             ]
         elif split == "test":
             self.songs = [
                 song
                 for song in self.songs
                 if not is_train_sample(song.song_name, train_set_ratio)
+                and get_channel_of_song(song.song_name) in channels_with_pop_music
             ]
         else:
             raise ValueError(f"Invalid split: {split}")
@@ -178,12 +251,14 @@ class FullSongPianorollDataset(Dataset):
                 song
                 for song in self.songs
                 if is_train_sample(song.song_name, train_set_ratio)
+                and get_channel_of_song(song.song_name) in channels_with_pop_music
             ]
         elif split == "test":
             self.songs = [
                 song
                 for song in self.songs
                 if not is_train_sample(song.song_name, train_set_ratio)
+                and get_channel_of_song(song.song_name) in channels_with_pop_music
             ]
         elif split == "all":
             pass
