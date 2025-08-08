@@ -76,7 +76,7 @@ if __name__ == "__main__":
     )
     arg_parser.add_argument("--output_path", type=Path, default="generated")
     arg_parser.add_argument(
-        "--ckpt", type=str, default="pretrained_ckpt/epoch=274-step=1650000.safetensors"
+        "--ckpt", type=str, default="pretrained_ckpt/epoch=384-step=2000000.safetensors"
     )
     arg_parser.add_argument(
         "--segments",

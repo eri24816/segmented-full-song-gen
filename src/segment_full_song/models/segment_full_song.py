@@ -535,7 +535,7 @@ class SegmentFullSongModel(nn.Module):
             feature = feature[:, -1, :]
 
             token_type_logits = self.token_type_classifier(feature)[0]  # (class)
-            token_type_logits = self.token_type_classifier(feature)[0]  # (class)
+
             token_type_pred = nucleus_sample(token_type_logits, top_p)  # scalar
 
             if token_type_pred == TokenSequence.FRAME:  # frame
@@ -566,9 +566,6 @@ class SegmentFullSongModel(nn.Module):
 
                 # sample velocity
                 out_pitch_emb = self.out_pitch_emb(pitch_pred.unsqueeze(0))
-                velocity_logits = self.velocity_classifier(feature + out_pitch_emb)[
-                    0
-                ]  # (class)
                 velocity_logits = self.velocity_classifier(feature + out_pitch_emb)[
                     0
                 ]  # (class)
@@ -664,12 +661,6 @@ class SegmentFullSongModel(nn.Module):
                         shift_from_song_start // self.frames_per_bar
                     )
                     bar_embeddings[0, bar_idx_from_song_start] = (
-                        self.calculate_bar_embedding(
-                            result.slice_pos(
-                                bar_idx * self.frames_per_bar,
-                                (bar_idx + 1) * self.frames_per_bar,
-                            )
-                        )
                         self.calculate_bar_embedding(
                             result.slice_pos(
                                 bar_idx * self.frames_per_bar,
@@ -1008,6 +999,8 @@ class SegmentFullSongModel(nn.Module):
         annotations: list[tuple[int, str]] = []
         for i, segment in enumerate(composed_segments):
             annotation = segment["label"] + str(i)
+            if i == 0:
+                annotation = f'{annotation} (seed)'
             annotations.append((segment["start"], annotation))
 
         return full_song, annotations
@@ -1030,6 +1023,7 @@ class SegmentFullSongModel(nn.Module):
         target_start_bar: int | None = None,
         target_end_bar: int | None = None,
         existing_pianoroll: Pianoroll | None = None,
+        seed_start_bar: int | None = None,
         generate_note_callback: Callable[[tuple[int, int, int, int]], None]
         | None = None,
     ) -> Pianoroll:
@@ -1145,9 +1139,6 @@ class SegmentFullSongModel(nn.Module):
                     f'Existing segment "{segment["label"]}": [{segment["start"] // self.frames_per_bar},{segment["end"] // self.frames_per_bar})'
                 )
 
-                logger.info(
-                    f'Existing segment "{segment["label"]}": [{segment["start"] // self.frames_per_bar},{segment["end"] // self.frames_per_bar})'
-                )
 
         if pre_overlap_segment is not None:
             logger.info(
@@ -1159,10 +1150,6 @@ class SegmentFullSongModel(nn.Module):
                 f'Segment to generate "{segment["label"]}": [{max(segment["start"] // self.frames_per_bar, target_start_bar)},{min(segment["end"] // self.frames_per_bar, target_end_bar)})'
             )
 
-            logger.info(
-                f'Segment to generate "{segment["label"]}": [{max(segment["start"] // self.frames_per_bar, target_start_bar)},{min(segment["end"] // self.frames_per_bar, target_end_bar)})'
-            )
-
         if post_overlap_segment is not None:
             logger.info(
                 f'Partial existing segment "{post_overlap_segment["label"]}": [{target_end_bar},{post_overlap_segment["end"] // self.frames_per_bar})'
@@ -1170,9 +1157,6 @@ class SegmentFullSongModel(nn.Module):
 
         for segment in existing_segments:
             if segment["end"] > target_end_frame:
-                logger.info(
-                    f'Existing segment "{segment["label"]}": [{segment["start"] // self.frames_per_bar},{segment["end"] // self.frames_per_bar})'
-                )
                 logger.info(
                     f'Existing segment "{segment["label"]}": [{segment["start"] // self.frames_per_bar},{segment["end"] // self.frames_per_bar})'
                 )
@@ -1237,6 +1221,14 @@ class SegmentFullSongModel(nn.Module):
             context_info_dict = get_context_for_target_segment(
                 existing_segments, target_segment
             )
+
+            # the get_context_for_target_segment function take the first segment as seed. Override it if seed_start_bar is not None
+            if seed_start_bar is not None:
+                for segment in existing_segments:
+                    if segment["start"] // self.frames_per_bar == seed_start_bar:
+                        context_info_dict["seed"] = segment
+                        break
+
             context: list[SegmentFullSongModel.SegmentItem] = []
             for context_name in ["left", "right", "seed", "reference"]:
                 context_info = context_info_dict[context_name]

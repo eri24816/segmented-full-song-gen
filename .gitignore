@@ -8,6 +8,8 @@
 /dataset/
 /ignore/
 /notebook/data/
+/eval/output/
+/eval_results
 
 *.tar
 *.safetensors

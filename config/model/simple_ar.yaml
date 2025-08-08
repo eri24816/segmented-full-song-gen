@@ -1,14 +1,14 @@
 model:
   type: simple_ar
   duration: 256
-  max_tokens: 896
+  max_tokens: 950
   pitch_range: [21, 109]
   dim: 512
   num_layers: 8
   max_note_duration: 64
 training:
   seed: 0x517
-  batch_size: 16
+  batch_size: 6
   accum_batches: 1
   shuffle: true
   drop_last: true
@@ -21,6 +21,6 @@ training:
   eps: 1e-8
   weight_decay: 0
 
-  demo_steps: 500
+  demo_steps: 4000
   checkpoint_steps: 50000
-  max_steps: 1000000
+  max_steps: 3000000
