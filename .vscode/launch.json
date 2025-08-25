@@ -2,6 +2,18 @@
     "version": "0.1.0",
     "configurations": [
         {
+            "name": "Python: Generate Eval Flat",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "eval/generate-eval-flat.py",
+            "args": [
+                "--dataset_path",
+                "../pop80k_k"
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
             "name": "Python: Train segment full song",
             "type": "debugpy",
             "request": "launch",

@@ -225,6 +225,7 @@ class TokenGenerator(nn.Module):
         prompt: TokenSequence | None = None,
         condition: torch.Tensor | None = None,
         progress_bar: bool = False,
+        top_p: float = 1,
     ):
         """
         autoregressive sampling
@@ -268,7 +269,7 @@ class TokenGenerator(nn.Module):
             token_type_logits = self.token_type_classifier(feature[:, -1, :])[
                 0
             ]  # (class)
-            token_type_pred = nucleus_sample(token_type_logits, 0.95)  # scalar
+            token_type_pred = nucleus_sample(token_type_logits, top_p)  # scalar
 
             if token_type_pred == TokenSequence.FRAME:  # frame
                 current_pos += 1
