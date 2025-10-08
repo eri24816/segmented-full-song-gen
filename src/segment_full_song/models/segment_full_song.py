@@ -455,7 +455,7 @@ class SegmentFullSongModel(nn.Module):
         condition: torch.Tensor | None = None,
         generate_note_callback: Callable[[tuple[int, int, int, int]], None]
         | None = None,
-        top_p: float = 0.95,
+        top_p: float = 1,
     ):
         """
         autoregressive sampling
@@ -613,7 +613,7 @@ class SegmentFullSongModel(nn.Module):
         duration: int | None = None,
         generate_note_callback: Callable[[tuple[int, int, int, int]], None]
         | None = None,
-        top_p: float = 0.95,
+        top_p: float = 1,
     ):
         if duration is None:
             duration = segment_duration
@@ -1024,6 +1024,7 @@ class SegmentFullSongModel(nn.Module):
         target_end_bar: int | None = None,
         existing_pianoroll: Pianoroll | None = None,
         seed_start_bar: int | None = None,
+        top_p: float = 1,
         generate_note_callback: Callable[[tuple[int, int, int, int]], None]
         | None = None,
     ) -> Pianoroll:
@@ -1032,6 +1033,7 @@ class SegmentFullSongModel(nn.Module):
         existing_pianoroll: the existing music content where the generation will add to
         target_start_bar: the start bar of the target segment
         target_end_bar: the end bar of the target segment (exclusive)
+        top_p: top_p for sampling
         """
 
         if target_start_bar is None:
@@ -1374,6 +1376,7 @@ class SegmentFullSongModel(nn.Module):
                 prompt=prompt,
                 duration=min(target_segment["end"], target_end_frame) - target_segment["start"],
                 generate_note_callback=generate_note_callback,
+                top_p=top_p,
             ).to_pianoroll()
 
             # if the last generated segment is partial, extend it to the end of the segment

@@ -1,5 +1,0 @@
-name: segment_full_song
-path: dataset/toy
-min_duration: 128
-max_duration: 6400
-bar_embedding_prop: latent_u6stz0hi
