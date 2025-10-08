@@ -88,13 +88,13 @@ def log_midi_as_audio(
 ):
     if soundfont_path is None:
         soundfont_path_str = os.getenv("SOUNDFONT_PATH")
-        assert soundfont_path_str is not None, (
-            "Please specify the soundfont path or set the SOUNDFONT_PATH environment variable."
-        )
-        soundfont_path = Path(soundfont_path_str)
-        assert soundfont_path.exists(), (
-            f"Soundfont path {soundfont_path} does not exist. Please set the SOUNDFONT_PATH environment variable to a valid path."
-        )
+        if soundfont_path_str is not None:
+            soundfont_path = Path(soundfont_path_str)
+            assert soundfont_path.exists(), (
+                f"Soundfont path {soundfont_path} does not exist. Please set the SOUNDFONT_PATH environment variable to a valid path."
+            )
+        else:
+            soundfont_path = None
     save_dir = Path(wandb.run.dir) / save_dir  # type: ignore
     save_dir.mkdir(exist_ok=True)
     midi_path = save_dir / "midi" / f"{name}/{step:08}.mid"
@@ -105,7 +105,7 @@ def log_midi_as_audio(
     mp3_path = save_dir / "mp3" / f"{name}/{step:08}.mp3"
     os.makedirs(wav_path.parent, exist_ok=True)
     os.makedirs(mp3_path.parent, exist_ok=True)
-    run_command(f'fluidsynth -F "{wav_path}" "{soundfont_path}" "{midi_path}"', output_level="none")
+    run_command(f'fluidsynth -F "{wav_path}" "{soundfont_path or ''}" "{midi_path}"')
     run_command(f'ffmpeg -y -i "{wav_path}" -b:a 192k "{mp3_path}"', output_level="none")
     # delete the wav file
     wav_path.unlink()

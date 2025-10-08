@@ -10,6 +10,7 @@
 /notebook/data/
 /eval/output/
 /eval_results
+/generated/
 
 *.tar
 *.safetensors

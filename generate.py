@@ -1,6 +1,7 @@
 import argparse
 from pathlib import Path
 
+from music_data_analysis import Pianoroll
 import torch
 import safetensors.torch
 from segment_full_song import create_model
@@ -51,14 +52,26 @@ def main(args):
     model.eval()
 
     segments = parse_segments_str(args.segments)
+    if args.seed_midi is not None:
+        seed_midi = Pianoroll.from_midi(Path(args.seed_midi))
+        seed_idx = list(map(int, args.compose_order)).index(0)
+        seed_duration = segments[seed_idx]["length_in_bars"] * model.frames_per_bar
+        if seed_midi.duration != seed_duration:
+            print(f"Seed MIDI duration {seed_midi.duration} does not match the given segment duration {seed_duration}. Adjusting the seed MIDI duration.")
+            seed_midi = seed_midi.slice(0, seed_duration)
+            seed_midi.duration = seed_duration
+        given_segments = [seed_midi]
+    else:
+        given_segments = []
+
     i = 0
     for _ in range(args.n_samples):
         generated_song, _ = model.sample_song(
             labels=[segment["label"] for segment in segments],
             lengths_in_bars=[segment["length_in_bars"] for segment in segments],
             compose_order=list(map(int, args.compose_order)),
-            given_segments=[],
-            top_p=1,
+            given_segments=given_segments,
+            top_p=args.top_p,
         )
         args.output_path.mkdir(parents=True, exist_ok=True)
         output_path = args.output_path / f"{i}.mid"
@@ -95,6 +108,12 @@ if __name__ == "__main__":
         "-n",
         type=int,
         default=1,
+    )
+    arg_parser.add_argument(
+        "--seed_midi", type=str, default=None,
+    )
+    arg_parser.add_argument(
+        "--top_p", type=float, default=0.975,
     )
     args = arg_parser.parse_args()
 
