@@ -1,9 +1,13 @@
 # Segment-Factorized Full-Song Generation on Symbolic Piano Music
 
-39th Conference on Neural Information Processing Systems (NeurIPS 2025) Workshop: AI for Music.
+[Paper](https://arxiv.org/abs/2510.05881) | [Demo](https://sfs-demo.eri24816.tw/) | [Interactive interface](https://github.com/eri24816/co-compose)
+
+Implementation of Segment-Factorized Full-Song Generation on Symbolic Piano Music, 39th Conference on Neural Information Processing Systems (NeurIPS 2025) Workshop: AI for Music.
+
+<img width="300"  alt="image" src="https://github.com/user-attachments/assets/b6565387-2159-4de2-a286-43148780db1c" />
 
 
-## Install the package and dependencies
+## Install dependencies
 
 `pip install -e .`
 
