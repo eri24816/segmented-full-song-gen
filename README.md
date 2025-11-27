@@ -1,6 +1,6 @@
 # Segment-Factorized Full-Song Generation on Symbolic Piano Music
 
-[Paper](https://arxiv.org/abs/2510.05881) | [Demo](https://sfs-demo.eri24816.tw/) | [Interactive interface](https://github.com/eri24816/co-compose)
+[Paper](https://arxiv.org/abs/2510.05881) | [Video](https://www.youtube.com/watch?v=YkrsK2dMfU8) | [Interactive interface](https://github.com/eri24816/co-compose)
 
 Implementation of Segment-Factorized Full-Song Generation on Symbolic Piano Music, 39th Conference on Neural Information Processing Systems (NeurIPS 2025) Workshop: AI for Music.
 
