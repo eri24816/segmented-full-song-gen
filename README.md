@@ -6,6 +6,11 @@ Implementation of Segment-Factorized Full-Song Generation on Symbolic Piano Musi
 
 <img width="300"  alt="image" src="https://github.com/user-attachments/assets/b6565387-2159-4de2-a286-43148780db1c" />
 
+## Trying the model
+
+It's highly recommended to interact with our model via [this user interface](https://github.com/eri24816/co-compose), where you can collaborate on creating music with the model. This repository only offers a non-interactive CLI.
+
+<img height="200" alt="image" src="https://github.com/user-attachments/assets/f31fab37-7069-47a6-a7a5-04b7da93f703" />
 
 ## Install dependencies
 
@@ -32,7 +37,7 @@ To specify the SFS model checkpoint, use the `--ckpt` argument.
 
 
 
-1. Set up dataset
+1. Set up the dataset
 
     Create dataset/synced_midi directory and put all midi files to it. The dataset structure should be like this:
     ```
@@ -46,13 +51,13 @@ To specify the SFS model checkpoint, use the `--ckpt` argument.
     Run the following command to preprocess the dataset.
     `python process_dataset.py --num_processes <num processes>`
 
-1. Set up utilites for logging audio to wandb
+1. Set up utilities for logging audio to wandb
 
     Make sure fluidsynth and ffmpeg are installed. For fluidsynth to work, you need to prepare a soundfont file and set the SOUNDFONT_PATH environment variable.
 
     `export SOUNDFONT_PATH="<path to soundfont>"`
 
-1. Login to wandb
+1. Log in to wandb
 
     `wandb login`
 
